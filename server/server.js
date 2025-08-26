@@ -14,12 +14,6 @@ dotenv.config();
 const PORT = process.env.PORT || 4000;
 const app = express();
 
-function createMongoStore() {
-  const client = mongoose.connection.getClient?.();
-  if (!client) throw new Error('MongoDB is not connected');
-  return MongoStore.create({ client });
-}
-
 // --- Mongoose Schemas and Models (defined outside to be accessible everywhere) ---
 
 // New Location Schema
@@ -399,7 +393,7 @@ if (process.env.CLIENT_URL) {
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || whitelist.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+    if (!origin || whitelist.includes(origin) || /^https?:\/\/(localhost|127\.0.0.1):\d+$/.test(origin)) {
       return callback(null, true);
     }
     callback(new Error('The CORS policy for this site does not allow access from the specified Origin.'));
@@ -422,36 +416,33 @@ function ensureSetupOnce() {
   }
   return setupPromise;
 }
-// Initialize the actual session store after the database connection is ready
-(async () => {
-  try {
-     await ensureSetupOnce();
-      sessionMiddleware = session({
-        name: 'connect.sid',
-        secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
-        resave: false,
-        saveUninitialized: false,
-        store: createMongoStore(),
-        cookie: {
-          maxAge: 1000 * 60 * 60 * 24,
-          httpOnly: true,
-          secure: true,   // Vercel is HTTPS
-          sameSite: 'lax' // same-origin is fine with 'lax'
-        }
-      });
-  } catch (err) {
-    console.error('Session setup failed:', err);
-  }
-})();
-// Ensure DB connection is ready before handling any request (crucial for serverless)
+// This middleware ensures DB connection is ready and initializes session handling before any routes.
+// It uses a lazy-initializer for the session handler to avoid re-creation on every request.
+let sessionHandler = null;
 app.use(async (req, res, next) => {
-  try {
-    await ensureSetupOnce();
-    next();
-  } catch (e) {
-    console.error('FATAL: Server setup failed:', e);
-    res.status(500).json({ message: 'Server setup failed. Please check logs.' });
-  }
+    if (sessionHandler) {
+        return sessionHandler(req, res, next);
+    }
+    try {
+        await ensureSetupOnce();
+        sessionHandler = session({
+            name: 'connect.sid',
+            secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
+            resave: false,
+            saveUninitialized: false,
+            store: MongoStore.create({ client: mongoose.connection.getClient() }),
+            cookie: {
+                maxAge: 1000 * 60 * 60 * 24,
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax'
+            }
+        });
+        sessionHandler(req, res, next);
+    } catch (err) {
+        console.error('Session setup failed:', err);
+        res.status(500).json({ message: 'Server setup failed. Please check logs.' });
+    }
 });
 
 
@@ -1437,39 +1428,22 @@ app.post('/api/users/check-email', async (req, res) => {
   });
 
 
-  // --- Start Server (local) or export for Vercel ---
-  if (process.env.VERCEL) {
-    // On Vercel: export a serverless handler
-    let handler;
-    module.exports = async (req, res) => {
-      if (!handler) {
-                     
-      }
-      return handler(req, res);
-    };
-  } else {
-    // Local dev
+// --- Start Server (local) or export for Vercel ---
+if (process.env.VERCEL) {
+    // On Vercel: export a serverless handler.
+    // The middleware above handles the async setup for each serverless invocation.
+    module.exports = serverless(app);
+} else {
+    // Local dev: ensure setup is complete before starting to listen.
     (async () => {
       try {
-        await ensureSetupOnce();
-        app.use(session({
-          name: 'connect.sid',
-          secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
-          resave: false,
-          saveUninitialized: false,
-           store: createMongoStore(),
-          cookie: {
-            maxAge: 1000 * 60 * 60 * 24,
-            httpOnly: true,
-            secure: true,   // Vercel is HTTPS
-            sameSite: 'lax'
-          }
-        }));
+        await ensureSetupOnce(); // This still makes sense to run once on startup for local.
         app.listen(PORT, () => {
           console.log(`[Server] Listening on ${PORT}`);
         });
       } catch (err) {
-        console.error('Setup error:', err);
+        console.error('Fatal setup error during startup:', err);
+        process.exit(1);
       }
     })();
-  }
+}
