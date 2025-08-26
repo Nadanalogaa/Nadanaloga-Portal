@@ -406,12 +406,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
-app.set('trust proxy', 1);// Register a placeholder session middleware that will be replaced
-// once the database connection is ready. This preserves middleware
-// order for routes defined later in the file.
-let sessionMiddleware = (req, res, next) => next();
-app.use((req, res, next) => sessionMiddleware(req, res, next));
-
+app.set('trust proxy', 1);
 
 // --- Setup Function for Serverless ---
 let setupPromise;
@@ -463,15 +458,16 @@ const noStore = (res) => {
 };
 
 const ensureAuthenticated = (req, res, next) => {
-  if (req.session.user) return next();
+  if (req.session?.user) return next();
   res.status(401).json({ message: 'Unauthorized' });
 };
 
 const ensureAdmin = (req, res, next) => {
-  if (!req.session.user) {
+ const user = req.session?.user;
+  if (!user) {
     return res.status(401).json({ message: 'Unauthorized: You must be logged in to perform this action.' });
   }
-  if (req.session.user.role === 'Admin') {
+  if (user.role === 'Admin') {
     return next();
   }
   res.status(403).json({ message: 'Forbidden: Administrative privileges required.' });
@@ -643,7 +639,7 @@ app.post('/api/users/check-email', async (req, res) => {
   // --- SESSION (now non-cacheable) ---
   app.get('/api/session', (req, res) => {
     noStore(res);
-    if (req.session.user) {
+    if (req.session?.user) {
       return res.status(200).json(req.session.user);
     }
     return res.status(200).json(null);
@@ -651,7 +647,7 @@ app.post('/api/users/check-email', async (req, res) => {
 
   // --- LOGOUT (now non-cacheable + clears cookie with matching flags) ---
   app.post('/api/logout', (req, res) => {
-    req.session.destroy(err => {
+    req.session?.destroy(err => {
       if (err) return res.status(500).json({ message: 'Could not log out.' });
       res.clearCookie('connect.sid', {
         httpOnly: true,
@@ -695,7 +691,8 @@ app.post('/api/users/check-email', async (req, res) => {
 
   app.put('/api/profile', ensureAuthenticated, async (req, res) => {
     try {
-      const userId = req.session.user.id;
+     const userId = req.session?.user?.id;
+      if (!userId) return res.status(401).json({ message: 'Unauthorized' });
       const { password, role, email, ...updateData } = req.body;
       const idToUpdate = updateData.id || userId;
 
@@ -704,7 +701,7 @@ app.post('/api/users/check-email', async (req, res) => {
       const updatedUser = updatedUserDoc.toJSON();
       delete updatedUser.password;
 
-      if (idToUpdate === userId) {
+      if (idToUpdate === userId && req.session) {
         req.session.user = updatedUser;
       }
 
@@ -717,8 +714,9 @@ app.post('/api/users/check-email', async (req, res) => {
 
   app.get('/api/student/enrollments', ensureAuthenticated, async (req, res) => {
     try {
-      const studentId = req.session.user.id;
-      if (req.session.user.role !== 'Student') {
+         const studentId = req.session?.user?.id;
+      if (!studentId) return res.status(401).json({ message: 'Unauthorized' });
+      if (req.session?.user?.role !== 'Student') {
         return res.status(403).json({ message: 'Access denied. This is a student-only endpoint.' });
       }
 
@@ -762,7 +760,8 @@ app.post('/api/users/check-email', async (req, res) => {
   // --- Family / Multi-student Routes ---
   app.get('/api/family/students', ensureAuthenticated, async (req, res) => {
     try {
-      const loggedInEmail = req.session.user.email.toLowerCase();
+    const loggedInEmail = req.session?.user?.email?.toLowerCase();
+      if (!loggedInEmail) return res.status(401).json({ message: 'Unauthorized' });
       const emailParts = loggedInEmail.split('@');
       if (emailParts.length < 2) {
         return res.status(400).json({ message: 'Invalid email format in session.' });
@@ -776,7 +775,7 @@ app.post('/api/users/check-email', async (req, res) => {
       const familyMembers = await User.find({ email: emailRegex, role: 'Student' }).select('-password').populate('locationId').sort({ email: 1 });
 
       if (!familyMembers || familyMembers.length === 0) {
-        const self = await User.findById(req.session.user.id).select('-password');
+         const self = await User.findById(req.session?.user?.id).select('-password');
         return res.json(self ? [self] : []);
       }
 
@@ -789,7 +788,8 @@ app.post('/api/users/check-email', async (req, res) => {
 
   const ensureStudentInFamily = async (req, res, next) => {
     try {
-      const loggedInEmail = req.session.user.email.toLowerCase();
+      const loggedInEmail = req.session?.user?.email?.toLowerCase();
+      if (!loggedInEmail) return res.status(401).json({ message: 'Unauthorized' });
       const emailParts = loggedInEmail.split('@');
       const baseUsername = emailParts[0].split('+')[0];
       const domain = emailParts[1];
@@ -1226,8 +1226,7 @@ app.post('/api/users/check-email', async (req, res) => {
   // --- User Notification Routes ---
   app.get('/api/notifications', ensureAuthenticated, async (req, res) => {
     try {
-      const notifications = await Notification.find({ userId: req.session.user.id }).sort({ createdAt: -1 });
-      res.json(notifications);
+      const notifications = await Notification.find({ userId: req.session?.user?.id }).sort({ createdAt: -1 });
     } catch (error) {
       res.status(500).json({ message: 'Server error fetching notifications.' });
     }
@@ -1236,7 +1235,7 @@ app.post('/api/users/check-email', async (req, res) => {
   app.put('/api/notifications/:id/read', ensureAuthenticated, async (req, res) => {
     try {
       const notification = await Notification.findOneAndUpdate(
-        { _id: req.params.id, userId: req.session.user.id },
+         { _id: req.params.id, userId: req.session?.user?.id },
         { read: true },
         { new: true }
       );
@@ -1250,10 +1249,10 @@ app.post('/api/users/check-email', async (req, res) => {
   // --- Student Fee Routes ---
   app.get('/api/invoices', ensureAuthenticated, async (req, res) => {
     try {
-      if (req.session.user.role !== 'Student') {
+      if (req.session?.user?.role !== 'Student') {
         return res.status(403).json({ message: 'Access denied.' });
       }
-      const invoices = await Invoice.find({ studentId: req.session.user.id }).sort({ issueDate: -1 });
+       const invoices = await Invoice.find({ studentId: req.session?.user?.id }).sort({ issueDate: -1 });
       res.json(invoices);
     } catch (error) {
       res.status(500).json({ message: 'Server error fetching your invoices.' });
@@ -1298,11 +1297,13 @@ app.post('/api/users/check-email', async (req, res) => {
     // Targeted content for logged-in user/family
     app.get(`/api/${path}`, ensureAuthenticated, async (req, res) => {
       try {
-        const familyMemberIds = await getFamilyMemberIds(req.session.user);
+        const sessionUser = req.session?.user;
+        if (!sessionUser) return res.status(401).json({ message: 'Unauthorized' });
+        const familyMemberIds = await getFamilyMemberIds(sessionUser);
         const items = await model.find({ recipientIds: { $in: familyMemberIds } }).sort({ date: -1, examDate: -1, issuedAt: -1 });
         res.json(items);
       } catch (error) {
-        console.error(`Error fetching ${path} for user ${req.session.user.id}:`, error);
+        console.error(`Error fetching ${path} for user ${req.session?.user?.id}:`, error);
         res.status(500).json({ message: `Server error fetching ${path}.` });
       }
     });
@@ -1430,15 +1431,53 @@ app.post('/api/users/check-email', async (req, res) => {
   });
 
 
-// --- Start Server (local) or export for Vercel ---
-if (process.env.VERCEL) {
-  // On Vercel: export a serverless handler
-  module.exports = serverless(app);
-} else {
-  // Local dev
-  app.listen(PORT, () => {
-    console.log(`[Server] Listening on ${PORT}`);
-    // kick off setup in background for local
-    ensureSetupOnce().catch(err => console.error('Setup error:', err));
-  });
-}
+  // --- Start Server (local) or export for Vercel ---
+  if (process.env.VERCEL) {
+    // On Vercel: export a serverless handler
+    let handler;
+    module.exports = async (req, res) => {
+      if (!handler) {
+        await ensureSetupOnce();
+        app.use(session({
+          name: 'connect.sid',
+          secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
+          resave: false,
+          saveUninitialized: false,
+          store: MongoStore.create({ client: mongoose.connection.getClient() }),
+          cookie: {
+            maxAge: 1000 * 60 * 60 * 24,
+            httpOnly: true,
+            secure: true,   // Vercel is HTTPS
+            sameSite: 'lax'
+          }
+        }));
+        handler = serverless(app);
+      }
+      return handler(req, res);
+    };
+  } else {
+    // Local dev
+    (async () => {
+      try {
+        await ensureSetupOnce();
+        app.use(session({
+          name: 'connect.sid',
+          secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
+          resave: false,
+          saveUninitialized: false,
+          store: MongoStore.create({ client: mongoose.connection.getClient() }),
+          cookie: {
+            maxAge: 1000 * 60 * 60 * 24,
+            httpOnly: true,
+            secure: true,   // Vercel is HTTPS
+            sameSite: 'lax'
+          }
+        }));
+        app.listen(PORT, () => {
+          console.log(`[Server] Listening on ${PORT}`);
+        });
+      } catch (err) {
+        console.error('Setup error:', err);
+      }
+    })();
+  }
