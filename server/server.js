@@ -6,6 +6,7 @@ const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
+const serverless = require('serverless-http');
 
 // Load environment variables
 dotenv.config();
@@ -419,6 +420,27 @@ app.use(session({
     sameSite: 'lax' // same-origin is fine with 'lax'
   }
 }));
+
+// --- Setup Function for Serverless ---
+let setupPromise;
+function ensureSetupOnce() {
+  if (!setupPromise) {
+    setupPromise = setupAndConnect(); // This is the existing setup function
+  }
+  return setupPromise;
+}
+
+// Ensure DB connection is ready before handling any request (crucial for serverless)
+app.use(async (req, res, next) => {
+  try {
+    await ensureSetupOnce();
+    next();
+  } catch (e) {
+    console.error('FATAL: Server setup failed:', e);
+    res.status(500).json({ message: 'Server setup failed. Please check logs.' });
+  }
+});
+
 
 // --- Auth Helpers & Routes ---
 const noStore = (res) => {
@@ -1396,14 +1418,15 @@ app.post('/api/users/check-email', async (req, res) => {
   });
 
 
-// --- Start Server ---
-app.listen(PORT, () => {
-    const allowedOriginsMessage = whitelist.join(', ');
-    console.log(`[Server] Express server listening on port ${PORT}. Health checks available.`);
-    
-    // After server is listening, begin async setup.
-    // This ensures the container starts quickly for environments like Cloud Run.
-    setupAndConnect().catch(err => {
-      console.error("FATAL: Error during asynchronous server setup:", err);
-    });
-});
+// --- Start Server (local) or export for Vercel ---
+if (process.env.VERCEL) {
+  // On Vercel: export a serverless handler
+  module.exports = serverless(app);
+} else {
+  // Local dev
+  app.listen(PORT, () => {
+    console.log(`[Server] Listening on ${PORT}`);
+    // kick off setup in background for local
+    ensureSetupOnce().catch(err => console.error('Setup error:', err));
+  });
+}
