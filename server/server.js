@@ -248,23 +248,33 @@ let isEtherealMode = false;
 async function setupAndConnect() {
   console.log(`[Server] Node environment (NODE_ENV): ${process.env.NODE_ENV || 'not set (defaults to development)'}`);
 
-  // Seed courses
+  // Seed courses with timeout
   const seedCourses = async () => {
     try {
-      const courseCount = await Course.countDocuments();
-      if (courseCount === 0) {
-        console.log('[DB] No courses found. Seeding initial courses...');
-        const initialCourses = [
-          { name: 'Bharatanatyam', description: 'Explore the grace and storytelling of classical Indian dance.', icon: 'Bharatanatyam' },
-          { name: 'Vocal', description: 'Develop your singing voice with professional training techniques.', icon: 'Vocal' },
-          { name: 'Drawing', description: 'Learn to express your creativity through sketching and painting.', icon: 'Drawing' },
-          { name: 'Abacus', description: 'Enhance mental math skills and concentration with our abacus program.', icon: 'Abacus' }
-        ];
-        await Course.insertMany(initialCourses);
-        console.log('[DB] Courses seeded successfully.');
-      }
+      // Add timeout to seeding
+      const seedTimeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Seeding timeout')), 3000)
+      );
+      
+      const seedOperation = async () => {
+        const courseCount = await Course.countDocuments();
+        if (courseCount === 0) {
+          console.log('[DB] No courses found. Seeding initial courses...');
+          const initialCourses = [
+            { name: 'Bharatanatyam', description: 'Explore the grace and storytelling of classical Indian dance.', icon: 'Bharatanatyam' },
+            { name: 'Vocal', description: 'Develop your singing voice with professional training techniques.', icon: 'Vocal' },
+            { name: 'Drawing', description: 'Learn to express your creativity through sketching and painting.', icon: 'Drawing' },
+            { name: 'Abacus', description: 'Enhance mental math skills and concentration with our abacus program.', icon: 'Abacus' }
+          ];
+          await Course.insertMany(initialCourses);
+          console.log('[DB] Courses seeded successfully.');
+        }
+      };
+      
+      await Promise.race([seedOperation(), seedTimeout]);
     } catch (error) {
-      console.error('[DB] Error seeding courses:', error);
+      console.error('[DB] Error seeding courses:', error.message);
+      // Don't throw - continue without seeding
     }
   };
 
@@ -299,7 +309,6 @@ async function setupAndConnect() {
     // Check if already connected
     if (mongoose.connection.readyState === 1) {
       console.log('[DB] MongoDB already connected.');
-      await seedCourses();
       return;
     }
     
@@ -316,7 +325,6 @@ async function setupAndConnect() {
       bufferMaxEntries: 0,
     });
     console.log('[DB] MongoDB connected successfully.');
-    await seedCourses();
   } catch (err) {
     console.error('\n--- 🚨 DATABASE CONNECTION FAILED ---');
     console.error(`[DB] Error: ${err.message}`);
@@ -332,9 +340,14 @@ let isSetupComplete = false;
 const ensureSetup = async () => {
   if (isSetupComplete) return;
   if (!setupPromise) {
-    setupPromise = setupAndConnect().then(() => {
-      isSetupComplete = true;
-    });
+    setupPromise = Promise.race([
+      setupAndConnect().then(() => {
+        isSetupComplete = true;
+      }),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Overall setup timeout')), 15000)
+      )
+    ]);
   }
   await setupPromise;
 };
@@ -439,20 +452,35 @@ app.get(['/api/ping', '/ping'], (req, res) => {
   res.json({ pong: true, timestamp: new Date().toISOString() });
 });
 
-// Ensure database connection before each request (with timeout)
+// Lightweight database check (non-blocking)
 app.use(async (req, res, next) => {
-  try {
-    // Add a timeout to prevent hanging
-    const setupTimeout = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Setup timeout')), 10000)
-    );
-    
-    await Promise.race([ensureSetup(), setupTimeout]);
-    next();
-  } catch (error) {
-    console.error('[Setup] Error ensuring setup:', error);
-    res.status(500).json({ message: 'Server initialization error: ' + error.message });
+  // Only ensure setup for database routes, skip for static files
+  if (req.path.startsWith('/api/') && req.path !== '/api/health' && req.path !== '/api/ping') {
+    try {
+      // Quick connection check without full setup
+      if (mongoose.connection.readyState !== 1) {
+        if (!process.env.MONGO_URI) {
+          return res.status(500).json({ message: 'Database not configured' });
+        }
+        // Try to connect with minimal timeout
+        if (mongoose.connection.readyState === 0) {
+          await mongoose.connect(process.env.MONGO_URI, {
+            serverSelectionTimeoutMS: 5000,
+            connectTimeoutMS: 5000,
+            socketTimeoutMS: 5000,
+            maxPoolSize: 3,
+            minPoolSize: 0,
+            bufferCommands: false,
+            bufferMaxEntries: 0,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[DB] Quick connect failed:', error.message);
+      return res.status(500).json({ message: 'Database connection failed: ' + error.message });
+    }
   }
+  next();
 });
 
 // Serve static only in local / non-serverless usage
@@ -674,9 +702,25 @@ app.post(['/api/contact', '/contact'], async (req, res) => {
 
 app.get(['/api/courses', '/courses'], async (_req, res) => {
   try {
-    const courses = await Course.find();
+    let courses = await Course.find();
+    
+    // Lazy seed if no courses exist
+    if (courses.length === 0) {
+      console.log('[DB] No courses found. Lazy seeding...');
+      const initialCourses = [
+        { name: 'Bharatanatyam', description: 'Explore the grace and storytelling of classical Indian dance.', icon: 'Bharatanatyam' },
+        { name: 'Vocal', description: 'Develop your singing voice with professional training techniques.', icon: 'Vocal' },
+        { name: 'Drawing', description: 'Learn to express your creativity through sketching and painting.', icon: 'Drawing' },
+        { name: 'Abacus', description: 'Enhance mental math skills and concentration with our abacus program.', icon: 'Abacus' }
+      ];
+      await Course.insertMany(initialCourses);
+      courses = await Course.find();
+      console.log('[DB] Courses lazy seeded successfully.');
+    }
+    
     res.json(courses);
-  } catch {
+  } catch (error) {
+    console.error('[API] Error in courses endpoint:', error);
     res.status(500).json({ message: 'Server error fetching courses.' });
   }
 });
