@@ -7,7 +7,9 @@
     "start": "node server/server.js",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "vercel --prod",
+    "deploy:dev": "vercel"
   },
   "dependencies": {
     "@google/genai": "^0.14.0",

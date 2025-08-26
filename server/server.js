@@ -268,34 +268,26 @@ async function setupAndConnect() {
     }
   };
 
-  // Mailer
+  // Mailer - simplified for serverless
   try {
     if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
       isEtherealMode = true;
-      console.log('\n--- ❗ EMAIL IS IN TEST MODE ❗ ---');
-      const testAccount = await nodemailer.createTestAccount();
-      mailTransporter = nodemailer.createTransport({
-        host: testAccount.smtp.host,
-        port: testAccount.smtp.port,
-        secure: testAccount.smtp.secure,
-        auth: { user: testAccount.user, pass: testAccount.pass },
-      });
+      console.log('[Email] No SMTP config - using test mode');
+      // Skip ethereal account creation in serverless to avoid timeouts
+      mailTransporter = null;
     } else {
-      console.log('\n--- 📧 EMAIL CONFIGURATION ---');
-      console.log(`[Email] Live SMTP config found. Attempting to connect to ${process.env.SMTP_HOST}...`);
-      mailTransporter = nodemailer.createTransport({
+      console.log('[Email] Configuring SMTP...');
+      mailTransporter = nodemailer.createTransporter({
         host: process.env.SMTP_HOST,
         port: parseInt(process.env.SMTP_PORT || '587', 10),
         secure: parseInt(process.env.SMTP_PORT || '587', 10) === 465,
         auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       });
-      await mailTransporter.verify();
-      console.log('[Email] ✅ SMTP connection verified. Server is ready to send real emails.');
-      console.log('-----------------------------\n');
+      console.log('[Email] SMTP transporter created');
     }
   } catch (error) {
-    console.error('\n--- 🚨 EMAIL CONFIGURATION FAILED ---');
-    console.error(`[Email] Error: ${error.message}`);
+    console.error('[Email] Configuration failed:', error.message);
+    mailTransporter = null;
   }
 
   // Mongo
@@ -303,10 +295,23 @@ async function setupAndConnect() {
     if (!process.env.MONGO_URI) {
       throw new Error('MONGO_URI is not defined.');
     }
-    const dbName = process.env.MONGO_DB || undefined; // lets you keep a root URI on Vercel
+    
+    // Check if already connected
+    if (mongoose.connection.readyState === 1) {
+      console.log('[DB] MongoDB already connected.');
+      await seedCourses();
+      return;
+    }
+    
+    const dbName = process.env.MONGO_DB || undefined;
     await mongoose.connect(process.env.MONGO_URI, {
       serverSelectionTimeoutMS: 5000,
-      dbName, // only applies if provided AND the URI has no db part
+      socketTimeoutMS: 30000,
+      maxPoolSize: 10,
+      minPoolSize: 1,
+      maxIdleTimeMS: 30000,
+      dbName,
+      bufferCommands: false,
     });
     console.log('[DB] MongoDB connected successfully.');
     await seedCourses();
@@ -319,7 +324,18 @@ async function setupAndConnect() {
 
 // Create a single promise for the main setup (DB connection, mailer).
 // This runs once per container instance, during the init phase.
-const setupPromise = setupAndConnect();
+let setupPromise = null;
+let isSetupComplete = false;
+
+const ensureSetup = async () => {
+  if (isSetupComplete) return;
+  if (!setupPromise) {
+    setupPromise = setupAndConnect().then(() => {
+      isSetupComplete = true;
+    });
+  }
+  await setupPromise;
+};
 
 /* =========================
    Helpers & Middleware
@@ -406,6 +422,17 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
+// Ensure database connection before each request
+app.use(async (req, res, next) => {
+  try {
+    await ensureSetup();
+    next();
+  } catch (error) {
+    console.error('[Setup] Error ensuring setup:', error);
+    res.status(500).json({ message: 'Server initialization error' });
+  }
+});
+
 // Serve static only in local / non-serverless usage
 if (process.env.NODE_ENV !== 'production') {
   const distDir = path.join(__dirname, '../dist');
@@ -471,6 +498,16 @@ const getFamilyMemberIds = async (sessionUser) => {
 /* =========================
    Routes
    ========================= */
+
+// Health check endpoint
+app.get(['/api/health', '/health'], (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    dbState: mongoose.connection.readyState,
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
 
 app.post(['/api/users/check-email', '/users/check-email'], async (req, res) => {
   try {
@@ -1241,7 +1278,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 async function startServer() {
   try {
-    await setupPromise;
+    await ensureSetup();
     app.listen(PORT, () => {
       console.log(`[Server] ✅ Server is running for local development on http://localhost:${PORT}`);
     });
