@@ -14,6 +14,12 @@ dotenv.config();
 const PORT = process.env.PORT || 4000;
 const app = express();
 
+function createMongoStore() {
+  const client = mongoose.connection.getClient?.();
+  if (!client) throw new Error('MongoDB is not connected');
+  return MongoStore.create({ client });
+}
+
 // --- Mongoose Schemas and Models (defined outside to be accessible everywhere) ---
 
 // New Location Schema
@@ -419,20 +425,20 @@ function ensureSetupOnce() {
 // Initialize the actual session store after the database connection is ready
 (async () => {
   try {
-    await ensureSetupOnce();
-    sessionMiddleware = session({
-      name: 'connect.sid',
-      secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
-      resave: false,
-      saveUninitialized: false,
-      store: MongoStore.create({ client: mongoose.connection.getClient() }),
-      cookie: {
-        maxAge: 1000 * 60 * 60 * 24,
-        httpOnly: true,
-        secure: true,   // Vercel is HTTPS
-        sameSite: 'lax' // same-origin is fine with 'lax'
-      }
-    });
+     await ensureSetupOnce();
+      sessionMiddleware = session({
+        name: 'connect.sid',
+        secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
+        resave: false,
+        saveUninitialized: false,
+        store: createMongoStore(),
+        cookie: {
+          maxAge: 1000 * 60 * 60 * 24,
+          httpOnly: true,
+          secure: true,   // Vercel is HTTPS
+          sameSite: 'lax' // same-origin is fine with 'lax'
+        }
+      });
   } catch (err) {
     console.error('Session setup failed:', err);
   }
@@ -1437,21 +1443,7 @@ app.post('/api/users/check-email', async (req, res) => {
     let handler;
     module.exports = async (req, res) => {
       if (!handler) {
-        await ensureSetupOnce();
-        app.use(session({
-          name: 'connect.sid',
-          secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
-          resave: false,
-          saveUninitialized: false,
-          store: MongoStore.create({ client: mongoose.connection.getClient() }),
-          cookie: {
-            maxAge: 1000 * 60 * 60 * 24,
-            httpOnly: true,
-            secure: true,   // Vercel is HTTPS
-            sameSite: 'lax'
-          }
-        }));
-        handler = serverless(app);
+                     
       }
       return handler(req, res);
     };
@@ -1465,7 +1457,7 @@ app.post('/api/users/check-email', async (req, res) => {
           secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
           resave: false,
           saveUninitialized: false,
-          store: MongoStore.create({ client: mongoose.connection.getClient() }),
+           store: createMongoStore(),
           cookie: {
             maxAge: 1000 * 60 * 60 * 24,
             httpOnly: true,
