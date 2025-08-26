@@ -302,14 +302,17 @@ async function setupAndConnect() {
     if (!process.env.MONGO_URI) {
       throw new Error("MONGO_URI is not defined in the environment variables.");
     }
-    await mongoose.connect(process.env.MONGO_URI);
+    // Set a timeout to prevent Vercel function from timing out on a cold start.
+    await mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 5000 });
     console.log('[DB] MongoDB connected successfully.');
     await seedCourses();
   } catch (err) {
     console.error('\n--- 🚨 DATABASE CONNECTION FAILED ---');
     console.error(`[DB] Error: ${err.message}`);
-    console.error('[DB] The server is running, but API calls requiring database access will fail.');
-    console.error('--- Make sure MONGO_URI is set correctly in your environment. ---\n');
+    console.error('[DB] API calls requiring database access will fail.');
+    console.error('--- Ensure MONGO_URI is set correctly in your Vercel environment variables and that Vercel IPs are whitelisted in your MongoDB firewall. ---\n');
+    // Re-throw the error to ensure the serverless function fails clearly.
+    throw err;
   }
 }
 
@@ -1224,6 +1227,7 @@ app.post('/api/users/check-email', async (req, res) => {
   app.get('/api/notifications', ensureAuthenticated, async (req, res) => {
     try {
       const notifications = await Notification.find({ userId: req.session?.user?.id }).sort({ createdAt: -1 });
+      res.json(notifications);
     } catch (error) {
       res.status(500).json({ message: 'Server error fetching notifications.' });
     }
@@ -1437,12 +1441,12 @@ if (process.env.VERCEL) {
     // Local dev: ensure setup is complete before starting to listen.
     (async () => {
       try {
-        await ensureSetupOnce(); // This still makes sense to run once on startup for local.
+        await ensureSetupOnce();
         app.listen(PORT, () => {
-          console.log(`[Server] Listening on ${PORT}`);
+          console.log(`[Server] ✅ Server is running locally on http://localhost:${PORT}`);
         });
       } catch (err) {
-        console.error('Fatal setup error during startup:', err);
+        console.error('[Server] 🚨 Could not start server due to setup failure:', err);
         process.exit(1);
       }
     })();
