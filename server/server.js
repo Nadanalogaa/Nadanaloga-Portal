@@ -452,10 +452,27 @@ app.get(['/api/ping', '/ping'], (req, res) => {
   res.json({ pong: true, timestamp: new Date().toISOString() });
 });
 
+// Session endpoint (no DB needed - bypass middleware)
+app.get(['/api/session', '/session'], (req, res) => {
+  noStore(res);
+  const session = readSession(req);
+  return res.status(200).json(session ? session.user : null);
+});
+
+// Logout endpoint (no DB needed - bypass middleware)
+app.post(['/api/logout', '/logout'], (req, res) => {
+  res.setHeader('Set-Cookie', [
+    `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
+  ]);
+  noStore(res);
+  res.status(200).json({ message: 'Logout successful' });
+});
+
 // Lightweight database check (non-blocking)
 app.use(async (req, res, next) => {
-  // Only ensure setup for database routes, skip for static files
-  if (req.path.startsWith('/api/') && req.path !== '/api/health' && req.path !== '/api/ping') {
+  // Only ensure setup for database routes, skip for static files and auth routes
+  const skipRoutes = ['/api/health', '/api/ping', '/api/session', '/api/logout'];
+  if (req.path.startsWith('/api/') && !skipRoutes.includes(req.path)) {
     try {
       // Quick connection check without full setup
       if (mongoose.connection.readyState !== 1) {
@@ -676,19 +693,6 @@ app.post(['/api/login', '/login'], async (req, res) => {
   }
 });
 
-app.get(['/api/session', '/session'], (req, res) => {
-  noStore(res);
-  const session = readSession(req);
-  return res.status(200).json(session ? session.user : null);
-});
-
-app.post(['/api/logout', '/logout'], (req, res) => {
-  res.setHeader('Set-Cookie', [
-    `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
-  ]);
-  noStore(res);
-  res.status(200).json({ message: 'Logout successful' });
-});
 
 app.post(['/api/contact', '/contact'], async (req, res) => {
   try {
