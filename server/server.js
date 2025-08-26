@@ -405,6 +405,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
+app.set('trust proxy', 1);
 app.use(session({
   name: 'connect.sid',
   secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
@@ -412,10 +413,10 @@ app.use(session({
   saveUninitialized: false,
   store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
   cookie: {
-    maxAge: 1000 * 60 * 60 * 24, // 1 day
+    maxAge: 1000 * 60 * 60 * 24,
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'lax' : 'lax',
+    secure: true,   // Vercel is HTTPS
+    sameSite: 'lax' // same-origin is fine with 'lax'
   }
 }));
 
