@@ -402,38 +402,45 @@ if (fs.existsSync(distDir)) {
 }
 
 /* =========================
-   Session (lazy init)
+   Session (Serverless-Safe)
    ========================= */
 
-let setupPromise;
-function ensureSetupOnce() {
-  if (!setupPromise) setupPromise = setupAndConnect();
-  return setupPromise;
-}
+// Create a single promise for the main setup (DB connection, mailer).
+// This runs once per container instance, during the init phase.
+const setupPromise = setupAndConnect();
 
-let sessionHandler = null;
-app.use(async (req, res, next) => {
-  if (sessionHandler) return sessionHandler(req, res, next);
-  try {
-    await ensureSetupOnce();
-    sessionHandler = session({
-      name: 'connect.sid',
-      secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
-      resave: false,
-      saveUninitialized: false,
-      store: MongoStore.create({ client: mongoose.connection.getClient() }),
-      cookie: {
-        maxAge: 1000 * 60 * 60 * 24,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
-      }
-    });
-    return sessionHandler(req, res, next);
-  } catch (err) {
-    console.error('Session setup failed:', err);
-    return res.status(500).json({ message: 'Server setup failed. Please check logs.' });
-  }
+// Create another promise that depends on the first, resolving with the configured session middleware.
+const sessionMiddlewarePromise = (async () => {
+    try {
+        await setupPromise; // Wait for the main setup to complete.
+        console.log('[Server] Database connected. Creating session middleware...');
+        return session({
+            name: 'connect.sid',
+            secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
+            resave: false,
+            saveUninitialized: false,
+            store: MongoStore.create({ client: mongoose.connection.getClient() }),
+            cookie: {
+                maxAge: 1000 * 60 * 60 * 24, // 1 day
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax'
+            }
+        });
+    } catch (err) {
+        console.error('[Server] CRITICAL: Failed to initialize session middleware.', err);
+        throw err;
+    }
+})();
+
+// Use a wrapper middleware that waits for the session middleware to be initialized.
+app.use((req, res, next) => {
+    sessionMiddlewarePromise
+        .then(middleware => middleware(req, res, next))
+        .catch(err => {
+            console.error('[Server] Session middleware is not available.', err);
+            res.status(503).json({ message: 'Service temporarily unavailable due to a setup error.' });
+        });
 });
 
 /* =========================
@@ -1126,7 +1133,7 @@ app.post(['/api/admin/invoices/generate', '/admin/invoices/generate'], ensureAdm
   }
 });
 
-app.put(['/api/admin/invoices/:id/pay', '/admin/invoices/:id/pay'], ensureAdmin, async (req, res) => {
+app.put(['/api/admin/invoices/:id/pay', '/api/admin/invoices/:id/pay'], ensureAdmin, async (req, res) => {
   try {
     const paymentDetails = req.body;
     const updatedInvoice = await Invoice.findByIdAndUpdate(
@@ -1229,8 +1236,8 @@ app.delete(['/api/admin/book-materials/:id', '/admin/book-materials/:id'], ensur
 /* Notices CRUD */
 app.get(['/api/admin/notices', '/admin/notices'], ensureAdmin, async (_req, res) => { try { res.json(await Notice.find().sort({ issuedAt: -1 })); } catch (e) { res.status(500).json({ message: e.message }); }});
 app.post(['/api/admin/notices', '/admin/notices'], ensureAdmin, async (req, res) => { try { res.status(201).json(await new Notice(req.body).save()); } catch (e) { res.status(500).json({ message: e.message }); }});
-app.put(['/api/admin/notices/:id', '/admin/notices/:id'], ensureAdmin, async (req, res) => { try { res.json(await Notice.findByIdAndUpdate(req.params.id, req.body, { new: true })); } catch (e) { res.status(500).json({ message: e.message }); }});
-app.delete(['/api/admin/notices/:id', '/admin/notices/:id'], ensureAdmin, async (req, res) => { try { await Notice.findByIdAndDelete(req.params.id); res.status(204).send(); } catch (e) { res.status(500).json({ message: e.message }); }});
+app.put(['/api/admin/notices/:id', '/api/admin/notices/:id'], ensureAdmin, async (req, res) => { try { res.json(await Notice.findByIdAndUpdate(req.params.id, req.body, { new: true })); } catch (e) { res.status(500).json({ message: e.message }); }});
+app.delete(['/api/admin/notices/:id', '/api/admin/notices/:id'], ensureAdmin, async (req, res) => { try { await Notice.findByIdAndDelete(req.params.id); res.status(204).send(); } catch (e) { res.status(500).json({ message: e.message }); }});
 
 /* =========================
    Frontend catch-all (local only)
@@ -1247,7 +1254,7 @@ app.get('*', (req, res, next) => {
 
 async function startServer() {
   try {
-    await ensureSetupOnce();
+    await setupPromise;
     app.listen(PORT, () => {
       console.log(`[Server] ✅ Server is running for local development on http://localhost:${PORT}`);
     });
