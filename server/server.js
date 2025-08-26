@@ -305,13 +305,15 @@ async function setupAndConnect() {
     
     const dbName = process.env.MONGO_DB || undefined;
     await mongoose.connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 30000,
-      maxPoolSize: 10,
-      minPoolSize: 1,
-      maxIdleTimeMS: 30000,
+      serverSelectionTimeoutMS: 8000,
+      socketTimeoutMS: 10000,
+      connectTimeoutMS: 10000,
+      maxPoolSize: 5,
+      minPoolSize: 0,
+      maxIdleTimeMS: 10000,
       dbName,
       bufferCommands: false,
+      bufferMaxEntries: 0,
     });
     console.log('[DB] MongoDB connected successfully.');
     await seedCourses();
@@ -422,14 +424,34 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
-// Ensure database connection before each request
+// Health check endpoints (bypass middleware)
+app.get(['/api/health', '/health'], (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    dbState: mongoose.connection.readyState,
+    environment: process.env.NODE_ENV || 'development',
+    mongoUri: process.env.MONGO_URI ? 'configured' : 'missing'
+  });
+});
+
+app.get(['/api/ping', '/ping'], (req, res) => {
+  res.json({ pong: true, timestamp: new Date().toISOString() });
+});
+
+// Ensure database connection before each request (with timeout)
 app.use(async (req, res, next) => {
   try {
-    await ensureSetup();
+    // Add a timeout to prevent hanging
+    const setupTimeout = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Setup timeout')), 10000)
+    );
+    
+    await Promise.race([ensureSetup(), setupTimeout]);
     next();
   } catch (error) {
     console.error('[Setup] Error ensuring setup:', error);
-    res.status(500).json({ message: 'Server initialization error' });
+    res.status(500).json({ message: 'Server initialization error: ' + error.message });
   }
 });
 
@@ -499,15 +521,6 @@ const getFamilyMemberIds = async (sessionUser) => {
    Routes
    ========================= */
 
-// Health check endpoint
-app.get(['/api/health', '/health'], (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    dbState: mongoose.connection.readyState,
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
 
 app.post(['/api/users/check-email', '/users/check-email'], async (req, res) => {
   try {
