@@ -25,7 +25,7 @@ const Footer: React.FC = () => {
               ))}
               <li>
                 <Link to="/admin/login" className="text-gray-300 hover:text-brand-secondary transition-colors">
-                  Admin Login
+                  Admin Login / Register
                 </Link>
               </li>
             </ul>

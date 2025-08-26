@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, useNavigate, Navigate, NavLink, useParams, Outlet } from 'react-router-dom';
+import { Routes, Route, useNavigate, Navigate, NavLink, useParams, Outlet, useLocation } from 'react-router-dom';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import HomePage from './pages/HomePage';
@@ -65,6 +65,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [loginEmail, setLoginEmail] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     const fetchUserSession = async () => {
@@ -115,7 +116,7 @@ function App() {
     }
     
     if (!currentUser) {
-      return <Navigate to="/admin/auth" replace />;
+      return <Navigate to="/admin/login" replace />;
     }
     
     if (currentUser.role !== UserRole.Admin) {
@@ -187,7 +188,7 @@ function App() {
           <Route path="/contact" element={<ContactPage />} />
           <Route path="/register" element={<RegisterPage onLoginNeeded={openLoginModal} />} />
           <Route 
-            path="/admin/auth" 
+            path="/admin/login" 
             element={<AdminLoginPage onLoginSuccess={handleLoginSuccess} />} 
           />
           <Route path="/admin/dashboard" element={<AdminProtectedRoute><AdminDashboardPage /></AdminProtectedRoute>} />
