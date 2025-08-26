@@ -4,19 +4,25 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const session = require('express-session');
-const MongoStore = require('connect-mongo');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 const serverless = require('serverless-http');
 const path = require('path');
 const fs = require('fs');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 
 // Load environment variables
 dotenv.config();
 
 const PORT = process.env.PORT || 4000;
 const app = express();
+
+const COOKIE_NAME = 'nadanaloga_session';
+const JWT_SECRET = process.env.SESSION_SECRET || 'a-very-super-secret-key-for-dev';
+if (process.env.NODE_ENV === 'production' && JWT_SECRET === 'a-very-super-secret-key-for-dev') {
+    console.warn('WARNING: Using default JWT_SECRET in production. Please set SESSION_SECRET environment variable.');
+}
 
 /* =========================
    Schemas & Models
@@ -311,6 +317,10 @@ async function setupAndConnect() {
   }
 }
 
+// Create a single promise for the main setup (DB connection, mailer).
+// This runs once per container instance, during the init phase.
+const setupPromise = setupAndConnect();
+
 /* =========================
    Helpers & Middleware
    ========================= */
@@ -369,6 +379,7 @@ app.set('trust proxy', 1);
 
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
+app.use(cookieParser());
 
 const whitelist = [
   'http://localhost:5173',
@@ -396,52 +407,12 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // Serve static only in local / non-serverless usage
-const distDir = path.join(__dirname, '../dist');
-if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
+if (process.env.NODE_ENV !== 'production') {
+  const distDir = path.join(__dirname, '../dist');
+  if (fs.existsSync(distDir)) {
+    app.use(express.static(distDir));
+  }
 }
-
-/* =========================
-   Session (Serverless-Safe)
-   ========================= */
-
-// Create a single promise for the main setup (DB connection, mailer).
-// This runs once per container instance, during the init phase.
-const setupPromise = setupAndConnect();
-
-// Create another promise that depends on the first, resolving with the configured session middleware.
-const sessionMiddlewarePromise = (async () => {
-    try {
-        await setupPromise; // Wait for the main setup to complete.
-        console.log('[Server] Database connected. Creating session middleware...');
-        return session({
-            name: 'connect.sid',
-            secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
-            resave: false,
-            saveUninitialized: false,
-            store: MongoStore.create({ client: mongoose.connection.getClient() }),
-            cookie: {
-                maxAge: 1000 * 60 * 60 * 24, // 1 day
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax'
-            }
-        });
-    } catch (err) {
-        console.error('[Server] CRITICAL: Failed to initialize session middleware.', err);
-        throw err;
-    }
-})();
-
-// Use a wrapper middleware that waits for the session middleware to be initialized.
-app.use((req, res, next) => {
-    sessionMiddlewarePromise
-        .then(middleware => middleware(req, res, next))
-        .catch(err => {
-            console.error('[Server] Session middleware is not available.', err);
-            res.status(503).json({ message: 'Service temporarily unavailable due to a setup error.' });
-        });
-});
 
 /* =========================
    Auth helpers
@@ -454,15 +425,32 @@ const noStore = (res) => {
   res.removeHeader('ETag');
 };
 
+const readSession = (req) => {
+    const token = req.cookies[COOKIE_NAME];
+    if (!token) return null;
+    try {
+        return jwt.verify(token, JWT_SECRET); // { user: {...}, iat, exp }
+    } catch {
+        return null;
+    }
+};
+
 const ensureAuthenticated = (req, res, next) => {
-  if (req.session?.user) return next();
+  const session = readSession(req);
+  if (session?.user) {
+    req.user = session.user;
+    return next();
+  }
   res.status(401).json({ message: 'Unauthorized' });
 };
 
 const ensureAdmin = (req, res, next) => {
-  const user = req.session?.user;
-  if (!user) return res.status(401).json({ message: 'Unauthorized: You must be logged in.' });
-  if (user.role === 'Admin') return next();
+  const session = readSession(req);
+  if (!session?.user) return res.status(401).json({ message: 'Unauthorized: You must be logged in.' });
+  if (session.user.role === 'Admin') {
+    req.user = session.user;
+    return next();
+  }
   res.status(403).json({ message: 'Forbidden: Administrative privileges required.' });
 };
 
@@ -592,17 +580,19 @@ app.post(['/api/login', '/login'], async (req, res) => {
     if (!userDoc) return res.status(401).json({ message: 'Invalid email or password.' });
     const isMatch = await bcrypt.compare(password, userDoc.password);
     if (!isMatch) return res.status(401).json({ message: 'Invalid email or password.' });
+    
     const user = userDoc.toJSON();
     delete user.password;
-    req.session.user = user;
-    req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-        return res.status(500).json({ message: 'Server error during login session setup.' });
-      }
-      noStore(res);
-      res.json(user);
-    });
+    
+    const token = jwt.sign({ user }, JWT_SECRET, { expiresIn: '7d' });
+    const isProd = process.env.NODE_ENV === 'production';
+    
+    res.setHeader('Set-Cookie', [
+      `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; ${isProd ? 'Secure; ' : ''}Max-Age=${7 * 24 * 3600}`
+    ]);
+    
+    noStore(res);
+    res.json(user);
   } catch (error) {
     res.status(500).json({ message: 'Server error during login.' });
   }
@@ -610,22 +600,16 @@ app.post(['/api/login', '/login'], async (req, res) => {
 
 app.get(['/api/session', '/session'], (req, res) => {
   noStore(res);
-  if (req.session?.user) return res.status(200).json(req.session.user);
-  return res.status(200).json(null);
+  const session = readSession(req);
+  return res.status(200).json(session ? session.user : null);
 });
 
 app.post(['/api/logout', '/logout'], (req, res) => {
-  req.session?.destroy(err => {
-    if (err) return res.status(500).json({ message: 'Could not log out.' });
-    res.clearCookie('connect.sid', {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      path: '/'
-    });
-    noStore(res);
-    res.status(200).json({ message: 'Logout successful' });
-  });
+  res.setHeader('Set-Cookie', [
+    `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
+  ]);
+  noStore(res);
+  res.status(200).json({ message: 'Logout successful' });
 });
 
 app.post(['/api/contact', '/contact'], async (req, res) => {
@@ -658,7 +642,7 @@ app.get(['/api/locations', '/locations'], async (_req, res) => {
 
 app.put(['/api/profile', '/profile'], ensureAuthenticated, async (req, res) => {
   try {
-    const userId = req.session?.user?.id;
+    const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: 'Unauthorized' });
     const { password, role, email, ...updateData } = req.body;
     const idToUpdate = updateData.id || userId;
@@ -666,7 +650,6 @@ app.put(['/api/profile', '/profile'], ensureAuthenticated, async (req, res) => {
     if (!updatedUserDoc) return res.status(404).json({ message: 'User not found.' });
     const updatedUser = updatedUserDoc.toJSON();
     delete updatedUser.password;
-    if (idToUpdate === userId && req.session) req.session.user = updatedUser;
     res.json(updatedUser);
   } catch (error) {
     console.error('Profile update error:', error);
@@ -676,9 +659,9 @@ app.put(['/api/profile', '/profile'], ensureAuthenticated, async (req, res) => {
 
 app.get(['/api/student/enrollments', '/student/enrollments'], ensureAuthenticated, async (req, res) => {
   try {
-    const studentId = req.session?.user?.id;
+    const studentId = req.user?.id;
     if (!studentId) return res.status(401).json({ message: 'Unauthorized' });
-    if (req.session?.user?.role !== 'Student') {
+    if (req.user?.role !== 'Student') {
       return res.status(403).json({ message: 'Access denied. This is a student-only endpoint.' });
     }
 
@@ -719,7 +702,7 @@ app.get(['/api/student/enrollments', '/student/enrollments'], ensureAuthenticate
 /* Family / Multi-student */
 app.get(['/api/family/students', '/family/students'], ensureAuthenticated, async (req, res) => {
   try {
-    const loggedInEmail = req.session?.user?.email?.toLowerCase();
+    const loggedInEmail = req.user?.email?.toLowerCase();
     if (!loggedInEmail) return res.status(401).json({ message: 'Unauthorized' });
 
     const emailParts = loggedInEmail.split('@');
@@ -730,7 +713,7 @@ app.get(['/api/family/students', '/family/students'], ensureAuthenticated, async
 
     const familyMembers = await User.find({ email: emailRegex, role: 'Student' }).select('-password').populate('locationId').sort({ email: 1 });
     if (!familyMembers || familyMembers.length === 0) {
-      const self = await User.findById(req.session?.user?.id).select('-password');
+      const self = await User.findById(req.user?.id).select('-password');
       return res.json(self ? [self] : []);
     }
     res.json(familyMembers);
@@ -742,7 +725,7 @@ app.get(['/api/family/students', '/family/students'], ensureAuthenticated, async
 
 const ensureStudentInFamily = async (req, res, next) => {
   try {
-    const loggedInEmail = req.session?.user?.email?.toLowerCase();
+    const loggedInEmail = req.user?.email?.toLowerCase();
     if (!loggedInEmail) return res.status(401).json({ message: 'Unauthorized' });
     const emailParts = loggedInEmail.split('@');
     const baseUsername = emailParts[0].split('+')[0];
@@ -1151,7 +1134,7 @@ app.put(['/api/admin/invoices/:id/pay', '/api/admin/invoices/:id/pay'], ensureAd
 /* Notifications (user) */
 app.get(['/api/notifications', '/notifications'], ensureAuthenticated, async (req, res) => {
   try {
-    const familyIds = await getFamilyMemberIds(req.session.user);
+    const familyIds = await getFamilyMemberIds(req.user);
     const notifications = await Notification.find({ userId: { $in: familyIds } }).sort({ createdAt: -1 });
     res.json(notifications);
   } catch {
@@ -1161,7 +1144,7 @@ app.get(['/api/notifications', '/notifications'], ensureAuthenticated, async (re
 
 app.put(['/api/notifications/:id/read', '/notifications/:id/read'], ensureAuthenticated, async (req, res) => {
   try {
-    const familyIds = await getFamilyMemberIds(req.session.user);
+    const familyIds = await getFamilyMemberIds(req.user);
     const notification = await Notification.findOneAndUpdate(
       { _id: req.params.id, userId: { $in: familyIds } },
       { read: true },
@@ -1177,7 +1160,7 @@ app.put(['/api/notifications/:id/read', '/notifications/:id/read'], ensureAuthen
 /* Content fetch helper */
 const getContentForUser = async (Model, req, res) => {
   try {
-    const familyIds = await getFamilyMemberIds(req.session.user);
+    const familyIds = await getFamilyMemberIds(req.user);
     const content = await Model.find({
       $or: [
         { recipientIds: { $exists: false } },
@@ -1205,7 +1188,7 @@ app.get(['/api/admin/trash', '/admin/trash'], ensureAdmin, async (_req, res) => 
     res.status(500).json({ message: 'Server error fetching trashed users.' });
   }
 });
-app.put(['/api/admin/trash/:id/restore', '/admin/trash/:id/restore'], ensureAdmin, async (req, res) => {
+app.put(['/api/admin/trash/:id/restore', '/api/admin/trash/:id/restore'], ensureAdmin, async (req, res) => {
   try {
     const user = await User.findByIdAndUpdate(req.params.id, { isDeleted: false, deletedAt: null }, { new: true });
     if (!user) return res.status(404).json({ message: 'User not found in trash.' });
@@ -1236,17 +1219,21 @@ app.delete(['/api/admin/book-materials/:id', '/admin/book-materials/:id'], ensur
 /* Notices CRUD */
 app.get(['/api/admin/notices', '/admin/notices'], ensureAdmin, async (_req, res) => { try { res.json(await Notice.find().sort({ issuedAt: -1 })); } catch (e) { res.status(500).json({ message: e.message }); }});
 app.post(['/api/admin/notices', '/admin/notices'], ensureAdmin, async (req, res) => { try { res.status(201).json(await new Notice(req.body).save()); } catch (e) { res.status(500).json({ message: e.message }); }});
-app.put(['/api/admin/notices/:id', '/api/admin/notices/:id'], ensureAdmin, async (req, res) => { try { res.json(await Notice.findByIdAndUpdate(req.params.id, req.body, { new: true })); } catch (e) { res.status(500).json({ message: e.message }); }});
-app.delete(['/api/admin/notices/:id', '/api/admin/notices/:id'], ensureAdmin, async (req, res) => { try { await Notice.findByIdAndDelete(req.params.id); res.status(204).send(); } catch (e) { res.status(500).json({ message: e.message }); }});
+app.put(['/api/admin/notices/:id', '/admin/notices/:id'], ensureAdmin, async (req, res) => { try { res.json(await Notice.findByIdAndUpdate(req.params.id, req.body, { new: true })); } catch (e) { res.status(500).json({ message: e.message }); }});
+app.delete(['/api/admin/notices/:id', '/admin/notices/:id'], ensureAdmin, async (req, res) => { try { await Notice.findByIdAndDelete(req.params.id); res.status(204).send(); } catch (e) { res.status(500).json({ message: e.message }); }});
 
 /* =========================
    Frontend catch-all (local only)
    ========================= */
-app.get('*', (req, res, next) => {
-  const indexPath = path.join(distDir, 'index.html');
-  if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
-  return next(); // in serverless/Vercel there is no SPA served by this process
-});
+if (process.env.NODE_ENV !== 'production') {
+    app.get('*', (req, res, next) => {
+      const distDir = path.join(__dirname, '../dist');
+      const indexPath = path.join(distDir, 'index.html');
+      if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
+      return next(); // in serverless/Vercel there is no SPA served by this process
+    });
+}
+
 
 /* =========================
    Local start vs Vercel export
