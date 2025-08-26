@@ -11,6 +11,7 @@ const nodemailer = require('nodemailer');
 dotenv.config();
 
 const PORT = process.env.PORT || 4000;
+const app = express();
 
 // --- Mongoose Schemas and Models (defined outside to be accessible everywhere) ---
 
@@ -230,8 +231,11 @@ noticeSchema.virtual('id').get(function () { return this._id.toHexString(); });
 noticeSchema.set('toJSON', { virtuals: true, transform: (doc, ret) => { delete ret._id; delete ret.__v; } });
 const Notice = mongoose.model('Notice', noticeSchema);
 
-// --- Main application startup ---
-async function startServer() {
+let mailTransporter;
+let isEtherealMode = false;
+
+// --- Setup Function (DB, Email, etc.) ---
+async function setupAndConnect() {
   console.log(`[Server] Node environment (NODE_ENV): ${process.env.NODE_ENV || 'not set (defaults to development)'}`);
 
   // --- Database Seeding Function ---
@@ -254,18 +258,62 @@ async function startServer() {
     }
   };
 
+  // --- Nodemailer Transport ---
+  try {
+    if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
+      isEtherealMode = true;
+      console.log('\n--- ❗ EMAIL IS IN TEST MODE ❗ ---');
+      console.log('[Email] WARNING: SMTP environment variables (SMTP_HOST, SMTP_USER, SMTP_PASS) are missing in server/.env');
+      console.log('[Email] Using Ethereal for dev previews.');
+      console.log('-------------------------------------\n');
+
+      const testAccount = await nodemailer.createTestAccount();
+      mailTransporter = nodemailer.createTransport({
+        host: testAccount.smtp.host,
+        port: testAccount.smtp.port,
+        secure: testAccount.smtp.secure,
+        auth: { user: testAccount.user, pass: testAccount.pass },
+      });
+    } else {
+      console.log('\n--- 📧 EMAIL CONFIGURATION ---');
+      console.log(`[Email] Live SMTP config found. Attempting to connect to ${process.env.SMTP_HOST}...`);
+      mailTransporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: parseInt(process.env.SMTP_PORT || '587', 10),
+        secure: parseInt(process.env.SMTP_PORT || '587', 10) === 465,
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      });
+
+      await mailTransporter.verify();
+      console.log('[Email] ✅ SMTP connection verified. Server is ready to send real emails.');
+      console.log('-----------------------------\n');
+    }
+  } catch (error) {
+    console.error('\n--- 🚨 EMAIL CONFIGURATION FAILED ---');
+    console.error('[Email] Could not connect to SMTP server. Please check your .env settings.');
+    console.error(`[Email] Error: ${error.message}`);
+    console.error('[Email] The app will run, but email sending will FAIL.');
+    console.error('--------------------------------------\n');
+  }
+
   // --- MongoDB Connection ---
   try {
+    if (!process.env.MONGO_URI) {
+      throw new Error("MONGO_URI is not defined in the environment variables.");
+    }
     await mongoose.connect(process.env.MONGO_URI);
     console.log('[DB] MongoDB connected successfully.');
     await seedCourses();
   } catch (err) {
-    console.error('[DB] MongoDB connection error:', err);
-    process.exit(1);
+    console.error('\n--- 🚨 DATABASE CONNECTION FAILED ---');
+    console.error(`[DB] Error: ${err.message}`);
+    console.error('[DB] The server is running, but API calls requiring database access will fail.');
+    console.error('--- Make sure MONGO_URI is set correctly in your environment. ---\n');
   }
+}
 
-  // --- Email Template ---
-  const createEmailTemplate = (name, subject, message) => {
+// --- Email Template ---
+const createEmailTemplate = (name, subject, message) => {
     const year = new Date().getFullYear();
     const logoUrl = 'https://i.ibb.co/9v0Gk5v/nadanaloga-logo-email.png';
     const brandColorDark = '#333333';
@@ -318,149 +366,102 @@ async function startServer() {
 </table>
 </body>
 </html>`;
-  };
+};
 
-  // --- Nodemailer Transport ---
-  let mailTransporter;
-  let isEtherealMode = false;
-  try {
-    if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      isEtherealMode = true;
-      console.log('\n--- ❗ EMAIL IS IN TEST MODE ❗ ---');
-      console.log('[Email] WARNING: SMTP environment variables (SMTP_HOST, SMTP_USER, SMTP_PASS) are missing in server/.env');
-      console.log('[Email] Using Ethereal for dev previews.');
-      console.log('-------------------------------------\n');
 
-      const testAccount = await nodemailer.createTestAccount();
-      mailTransporter = nodemailer.createTransport({
-        host: testAccount.smtp.host,
-        port: testAccount.smtp.port,
-        secure: testAccount.smtp.secure,
-        auth: { user: testAccount.user, pass: testAccount.pass },
-      });
-    } else {
-      console.log('\n--- 📧 EMAIL CONFIGURATION ---');
-      console.log(`[Email] Live SMTP config found. Attempting to connect to ${process.env.SMTP_HOST}...`);
-      mailTransporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '587', 10),
-        secure: parseInt(process.env.SMTP_PORT || '587', 10) === 465,
-        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-      });
+// *** IMPORTANT: App Configuration (Middleware, etc.) ***
+app.set('etag', false);
+app.disable('x-powered-by');
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
 
-      await mailTransporter.verify();
-      console.log('[Email] ✅ SMTP connection verified. Server is ready to send real emails.');
-      console.log('-----------------------------\n');
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
+
+const whitelist = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+  'https://nadanaloga-portal.vercel.app'
+];
+if (process.env.CLIENT_URL) {
+  whitelist.push(process.env.CLIENT_URL);
+}
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || whitelist.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+      return callback(null, true);
     }
-  } catch (error) {
-    console.error('\n--- 🚨 EMAIL CONFIGURATION FAILED ---');
-    console.error('[Email] Could not connect to SMTP server. Please check your .env settings.');
-    console.error(`[Email] Error: ${error.message}`);
-    console.error('[Email] The app will run, but email sending will FAIL.');
-    console.error('--------------------------------------\n');
+    callback(new Error('The CORS policy for this site does not allow access from the specified Origin.'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
+app.use(session({
+  name: 'connect.sid',
+  secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
+  cookie: {
+    maxAge: 1000 * 60 * 60 * 24, // 1 day
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'lax' : 'lax',
   }
+}));
 
-  const app = express();
+// --- Auth Helpers & Routes ---
+const noStore = (res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.removeHeader('ETag');
+};
 
-  // *** IMPORTANT: Disable ETags to prevent 304 on /api/session ***
-  app.set('etag', false);
-  app.disable('x-powered-by');
-  if (process.env.NODE_ENV === 'production') {
-    // behind reverse proxies/CDN set this so secure cookies work
-    app.set('trust proxy', 1);
+const ensureAuthenticated = (req, res, next) => {
+  if (req.session.user) return next();
+  res.status(401).json({ message: 'Unauthorized' });
+};
+
+const ensureAdmin = (req, res, next) => {
+  if (!req.session.user) {
+    return res.status(401).json({ message: 'Unauthorized: You must be logged in to perform this action.' });
   }
-
-  // --- Middleware ---
-  app.use(express.json({ limit: '100mb' }));
-  app.use(express.urlencoded({ limit: '100mb', extended: true }));
-
-  const whitelist = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:5500',
-    'http://127.0.0.1:5500',
-  ];
-  if (process.env.CLIENT_URL) {
-    whitelist.push(process.env.CLIENT_URL);
+  if (req.session.user.role === 'Admin') {
+    return next();
   }
+  res.status(403).json({ message: 'Forbidden: Administrative privileges required.' });
+};
 
-  const corsOptions = {
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true); // tools/curl/postman
-      if (whitelist.includes(origin)) return callback(null, true);
-      if (/^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) return callback(null, true);
-      callback(new Error('The CORS policy for this site does not allow access from the specified Origin.'));
-    },
-  };
+const getFamilyMemberIds = async (sessionUser) => {
+  if (sessionUser.role === 'Teacher') {
+    return [sessionUser.id];
+  }
+  const loggedInEmail = sessionUser.email.toLowerCase();
+  const emailParts = loggedInEmail.split('@');
+  if (emailParts.length < 2) return [sessionUser.id];
 
-  // Strengthened CORS with credentials/methods/headers + OPTIONS
-  app.use(cors({
-    ...corsOptions,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  }));
-  app.options('*', cors());
+  const baseUsername = emailParts[0].split('+')[0];
+  const domain = emailParts[1];
+  const emailRegex = new RegExp(`^${baseUsername.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}(\\+.+)?@${domain.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}$`, 'i');
 
-  // --- Session Management ---
-  app.use(session({
-    name: 'connect.sid',
-    secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
-    cookie: {
-      maxAge: 1000 * 60 * 60 * 24, // 1 day
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // true only on HTTPS
-      sameSite: process.env.NODE_ENV === 'production' ? 'lax' : 'lax',
-    }
-  }));
+  const familyMembers = await User.find({ email: emailRegex, role: 'Student' }).select('_id');
+  const familyIds = new Set(familyMembers.map(m => m._id.toString()));
+  familyIds.add(sessionUser.id);
+  return Array.from(familyIds);
+};
 
-  // Small helper to make auth routes non-cacheable
-  const noStore = (res) => {
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.set('Pragma', 'no-cache');
-    res.set('Expires', '0');
-    res.removeHeader('ETag');
-  };
-
-  const ensureAuthenticated = (req, res, next) => {
-    if (req.session.user) return next();
-    res.status(401).json({ message: 'Unauthorized' });
-  };
-
-  const ensureAdmin = (req, res, next) => {
-    if (!req.session.user) {
-      return res.status(401).json({ message: 'Unauthorized: You must be logged in to perform this action.' });
-    }
-    if (req.session.user.role === 'Admin') {
-      return next();
-    }
-    res.status(403).json({ message: 'Forbidden: Administrative privileges required.' });
-  };
-
-  // Helper function to get all user IDs associated with a session (e.g., family members)
-  const getFamilyMemberIds = async (sessionUser) => {
-    if (sessionUser.role === 'Teacher') {
-      return [sessionUser.id];
-    }
-    const loggedInEmail = sessionUser.email.toLowerCase();
-    const emailParts = loggedInEmail.split('@');
-    if (emailParts.length < 2) return [sessionUser.id];
-
-    const baseUsername = emailParts[0].split('+')[0];
-    const domain = emailParts[1];
-    const emailRegex = new RegExp(`^${baseUsername.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}(\\+.+)?@${domain.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}$`, 'i');
-
-    const familyMembers = await User.find({ email: emailRegex, role: 'Student' }).select('_id');
-    const familyIds = new Set(familyMembers.map(m => m._id.toString()));
-    familyIds.add(sessionUser.id);
-    return Array.from(familyIds);
-  };
-
-  // --- API Routes ---
-  app.post('/api/users/check-email', async (req, res) => {
+// --- API Routes (moved to top level) ---
+app.post('/api/users/check-email', async (req, res) => {
     try {
       const { email } = req.body;
       if (!email) return res.status(400).json({ message: 'Email is required.' });
@@ -1393,16 +1394,15 @@ async function startServer() {
     }
   });
 
-  // --- Start Server ---
-  app.listen(PORT, () => {
-    const allowedOriginsMessage = [...whitelist, 'any other localhost port'].join(', ');
-    console.log(`[Server] Running on http://localhost:${PORT}`);
-    console.log(`[Server] CORS is configured to allow requests from: ${allowedOriginsMessage}`);
-  });
-}
 
-// Start the server by calling the async function
-startServer().catch(err => {
-  console.error("FATAL: Failed to start server:", err);
-  process.exit(1);
+// --- Start Server ---
+app.listen(PORT, () => {
+    const allowedOriginsMessage = whitelist.join(', ');
+    console.log(`[Server] Express server listening on port ${PORT}. Health checks available.`);
+    
+    // After server is listening, begin async setup.
+    // This ensures the container starts quickly for environments like Cloud Run.
+    setupAndConnect().catch(err => {
+      console.error("FATAL: Error during asynchronous server setup:", err);
+    });
 });

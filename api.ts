@@ -1,42 +1,43 @@
 import type { User, ContactFormData, Course, DashboardStats, Notification, Batch, FeeStructure, Invoice, PaymentDetails, StudentEnrollment, Event, GradeExam, BookMaterial, Notice, Location } from './types';
 
-const API_BASE_URL = 'http://localhost:4000/api';
-
-const handleResponse = async (response: Response) => {
-  if (response.status === 204 || response.status === 205) {
-    return null;
-  }
-  
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.message || 'An error occurred.');
-  }
-
-  return data;
-};
+const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const API_BASE_URL = isLocal
+  ? 'http://localhost:4000/api'
+  : 'https://nadanaloga-server-102363586539.us-west1.run.app/api';
 
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-  const defaultOptions: RequestInit = {
+  const config: RequestInit = {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...options.headers,
     },
-    credentials: 'include', // Important for sending cookies/session
+    credentials: 'include',
   };
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, { ...defaultOptions, ...options });
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
 
   if (response.status === 401 && endpoint !== '/session' && endpoint !== '/users/check-email') {
     console.error('API request unauthorized. Session may have expired. Redirecting to home.');
-    // This is a global way to handle session expiry.
-    // Any API call that returns a 401 will force a logout.
     window.location.assign('/');
-    // Return a promise that never resolves to prevent further processing by the caller
     return new Promise(() => {});
   }
+  
+  if (response.status === 204 || response.status === 205) {
+    return null;
+  }
 
-  return handleResponse(response);
+  const contentType = response.headers.get('content-type') || '';
+  const body = contentType.includes('application/json') ? await response.json() : await response.text();
+
+  if (!response.ok) {
+    const errorMessage = (typeof body === 'object' && body?.message) ? body.message : (typeof body === 'string' && body) ? body : `HTTP Error: ${response.status}`;
+    throw new Error(errorMessage);
+  }
+  
+  return body;
 };
+
 
 export const checkEmailExists = async (email: string): Promise<{ exists: boolean }> => {
   return apiFetch('/users/check-email', {
