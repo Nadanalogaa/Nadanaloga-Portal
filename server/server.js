@@ -406,20 +406,12 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
-app.set('trust proxy', 1);
-app.use(session({
-  name: 'connect.sid',
-  secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
-  resave: false,
-  saveUninitialized: false,
-  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
-  cookie: {
-    maxAge: 1000 * 60 * 60 * 24,
-    httpOnly: true,
-    secure: true,   // Vercel is HTTPS
-    sameSite: 'lax' // same-origin is fine with 'lax'
-  }
-}));
+app.set('trust proxy', 1);// Register a placeholder session middleware that will be replaced
+// once the database connection is ready. This preserves middleware
+// order for routes defined later in the file.
+let sessionMiddleware = (req, res, next) => next();
+app.use((req, res, next) => sessionMiddleware(req, res, next));
+
 
 // --- Setup Function for Serverless ---
 let setupPromise;
@@ -429,7 +421,27 @@ function ensureSetupOnce() {
   }
   return setupPromise;
 }
-
+// Initialize the actual session store after the database connection is ready
+(async () => {
+  try {
+    await ensureSetupOnce();
+    sessionMiddleware = session({
+      name: 'connect.sid',
+      secret: process.env.SESSION_SECRET || 'a-secure-secret-key',
+      resave: false,
+      saveUninitialized: false,
+      store: MongoStore.create({ client: mongoose.connection.getClient() }),
+      cookie: {
+        maxAge: 1000 * 60 * 60 * 24,
+        httpOnly: true,
+        secure: true,   // Vercel is HTTPS
+        sameSite: 'lax' // same-origin is fine with 'lax'
+      }
+    });
+  } catch (err) {
+    console.error('Session setup failed:', err);
+  }
+})();
 // Ensure DB connection is ready before handling any request (crucial for serverless)
 app.use(async (req, res, next) => {
   try {
