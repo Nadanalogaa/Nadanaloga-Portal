@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, Navigate, NavLink, useParams, Outlet } from 'react-router-dom';
 import Header from './components/Header';
@@ -117,7 +115,7 @@ function App() {
     }
     
     if (!currentUser) {
-      return <Navigate to="/admin/login" replace />;
+      return <Navigate to="/admin/auth" replace />;
     }
     
     if (currentUser.role !== UserRole.Admin) {
@@ -189,7 +187,7 @@ function App() {
           <Route path="/contact" element={<ContactPage />} />
           <Route path="/register" element={<RegisterPage onLoginNeeded={openLoginModal} />} />
           <Route 
-            path="/admin/login" 
+            path="/admin/auth" 
             element={<AdminLoginPage onLoginSuccess={handleLoginSuccess} />} 
           />
           <Route path="/admin/dashboard" element={<AdminProtectedRoute><AdminDashboardPage /></AdminProtectedRoute>} />

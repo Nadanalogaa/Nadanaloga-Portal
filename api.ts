@@ -1,4 +1,3 @@
-
 import type { User, ContactFormData, Course, DashboardStats, Notification, Batch, FeeStructure, Invoice, PaymentDetails, StudentEnrollment, Event, GradeExam, BookMaterial, Notice, Location } from './types';
 
 const API_BASE_URL = 'http://localhost:4000/api';
@@ -48,6 +47,13 @@ export const checkEmailExists = async (email: string): Promise<{ exists: boolean
 
 export const registerUser = async (userData: Partial<User>[]): Promise<any> => {
   return apiFetch('/register', {
+    method: 'POST',
+    body: JSON.stringify(userData),
+  });
+};
+
+export const registerAdmin = async (userData: Partial<User>): Promise<any> => {
+  return apiFetch('/admin/register', {
     method: 'POST',
     body: JSON.stringify(userData),
   });
