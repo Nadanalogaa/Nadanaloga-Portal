@@ -1,2 +1,3 @@
 // This makes /api/* on your Vercel domain hit your Express app
-module.exports = require('../server/server.js');
+import handler from '../server/server.js';
+export default handler;
