@@ -436,6 +436,21 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
+// Middleware to ensure database connection for serverless
+app.use((req, res, next) => {
+  // Skip setup for health/ping endpoints
+  if (req.path === '/health' || req.path === '/ping' || req.path === '/api/health' || req.path === '/api/ping') {
+    return next();
+  }
+  
+  ensureSetup()
+    .then(() => next())
+    .catch(error => {
+      console.error('[Middleware] Setup failed:', error);
+      res.status(500).json({ message: 'Server initialization failed' });
+    });
+});
+
 // Health check endpoints (bypass middleware)
 app.get(['/api/health', '/health'], (req, res) => {
   res.json({ 
@@ -1352,19 +1367,5 @@ if (require.main === module) {
   startServer();
 }
 
-// Create serverless handler that ensures DB connection
-const serverlessHandler = serverless(app);
-
-// Wrap the handler to ensure database connection
-const wrappedHandler = async (req, res) => {
-  try {
-    await ensureSetup();
-    return serverlessHandler(req, res);
-  } catch (error) {
-    console.error('[Serverless] Setup failed:', error);
-    return res.status(500).json({ message: 'Server initialization failed' });
-  }
-};
-
 // Always export a serverless handler for Vercel
-module.exports = wrappedHandler;
+module.exports = serverless(app);
