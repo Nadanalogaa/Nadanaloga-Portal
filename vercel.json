@@ -3,10 +3,6 @@
   "outputDirectory": "dist",
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/server.cjs"
-    },
-    {
       "src": "/(dashboard|admin|register|login).*",
       "dest": "/index.html"
     },
@@ -31,7 +27,7 @@
     "NODE_ENV": "production"
   },
   "functions": {
-    "api/server.cjs": {
+    "api/*.js": {
       "maxDuration": 60,
       "memory": 1024
     }
