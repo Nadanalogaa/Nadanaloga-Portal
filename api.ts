@@ -2,9 +2,13 @@ import type { User, ContactFormData, Course, DashboardStats, Notification, Batch
 
 const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
-const API_BASE_URL =
-  ((import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '') ||
-  (isLocal ? 'http://localhost:4000/api' : '/api');
+const API_BASE_URL = (() => {
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (envUrl && typeof envUrl === 'string') {
+    return envUrl.replace(/\/$/, '');
+  }
+  return isLocal ? 'http://localhost:4000/api' : '/api';
+})();
 
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   const config: RequestInit = {
