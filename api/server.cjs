@@ -287,7 +287,7 @@ async function setupAndConnect() {
       mailTransporter = null;
     } else {
       console.log('[Email] Configuring SMTP...');
-      mailTransporter = nodemailer.createTransporter({
+      mailTransporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: parseInt(process.env.SMTP_PORT || '587', 10),
         secure: parseInt(process.env.SMTP_PORT || '587', 10) === 465,
@@ -322,7 +322,6 @@ async function setupAndConnect() {
       maxIdleTimeMS: 10000,
       dbName,
       bufferCommands: false,
-      bufferMaxEntries: 0,
     });
     console.log('[DB] MongoDB connected successfully.');
   } catch (err) {
@@ -488,7 +487,6 @@ app.use(async (req, res, next) => {
             maxPoolSize: 3,
             minPoolSize: 0,
             bufferCommands: false,
-            bufferMaxEntries: 0,
           });
         }
       }

@@ -4,7 +4,7 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/api/server.js"
+      "dest": "/api/server.cjs"
     },
     {
       "src": "/(dashboard|admin|register|login).*",
@@ -31,7 +31,7 @@
     "NODE_ENV": "production"
   },
   "functions": {
-    "api/server.js": {
+    "api/server.cjs": {
       "maxDuration": 60,
       "memory": 1024
     }
