@@ -1,10 +1,7 @@
 // api/index.js - Simple API handler for Vercel
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-
 const handler = require('./server.cjs');
 
-export default async function(req, res) {
+module.exports = async (req, res) => {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
@@ -18,4 +15,4 @@ export default async function(req, res) {
   }
 
   return handler(req, res);
-}
+};
