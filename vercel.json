@@ -3,6 +3,10 @@
     {
       "source": "/api/admin/(.*)",
       "destination": "/api/admin"
+    },
+    {
+      "source": "/((?!api|_next|_vercel|favicon.ico).*)",
+      "destination": "/index.html"
     }
   ]
 }

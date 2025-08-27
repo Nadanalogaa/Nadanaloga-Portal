@@ -20,7 +20,7 @@ const userSchema = new mongoose.Schema({
 userSchema.virtual('id').get(function () { return this._id.toHexString(); });
 userSchema.set('toJSON', {
   virtuals: true,
-  transform: (doc, ret) => {
+  transform: (_, ret) => {
     delete ret._id; 
     delete ret.__v;
     delete ret.password;
@@ -33,7 +33,7 @@ const locationSchema = new mongoose.Schema({
 });
 
 locationSchema.virtual('id').get(function () { return this._id.toHexString(); });
-locationSchema.set('toJSON', { virtuals: true, transform: (doc, ret) => { delete ret._id; delete ret.__v; } });
+locationSchema.set('toJSON', { virtuals: true, transform: (_, ret) => { delete ret._id; delete ret.__v; } });
 
 const courseSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -45,7 +45,7 @@ const courseSchema = new mongoose.Schema({
 });
 
 courseSchema.virtual('id').get(function () { return this._id.toHexString(); });
-courseSchema.set('toJSON', { virtuals: true, transform: (doc, ret) => { delete ret._id; delete ret.__v; } });
+courseSchema.set('toJSON', { virtuals: true, transform: (_, ret) => { delete ret._id; delete ret.__v; } });
 
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 const Location = mongoose.models.Location || mongoose.model('Location', locationSchema);
