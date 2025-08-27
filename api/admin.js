@@ -170,6 +170,32 @@ export default async function handler(req, res) {
         }
         return res.status(405).json({ message: 'Method not allowed' });
 
+      case 'register':
+        if (req.method === 'POST') {
+          const { password, ...userData } = req.body;
+          if (!userData.email) {
+            return res.status(400).json({ message: 'Email is required.' });
+          }
+          
+          const existingUser = await User.findOne({ email: userData.email.toLowerCase() });
+          if (existingUser) {
+            return res.status(409).json({ message: 'This email is already registered.' });
+          }
+          
+          const effectivePassword = password || 'password123';
+          const hashedPassword = await bcrypt.hash(effectivePassword, 10);
+          const user = new User({ 
+            ...userData, 
+            password: hashedPassword,
+            role: userData.role || 'Admin'
+          });
+          await user.save();
+          
+          const newUserDoc = await User.findById(user._id).select('-password');
+          return res.status(201).json(newUserDoc.toJSON());
+        }
+        return res.status(405).json({ message: 'Method not allowed' });
+
       case 'batches':
       case 'feestructures':
       case 'invoices':
