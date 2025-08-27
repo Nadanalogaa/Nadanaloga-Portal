@@ -14,7 +14,7 @@ const NotificationBell: React.FC = () => {
         try {
             setIsLoading(true);
             const fetchedNotifications = await getNotifications();
-            setNotifications(fetchedNotifications);
+            setNotifications(Array.isArray(fetchedNotifications) ? fetchedNotifications : []);
         } catch (error) {
             console.error("Failed to fetch notifications:", error);
         } finally {
@@ -38,7 +38,7 @@ const NotificationBell: React.FC = () => {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, [wrapperRef]);
     
-    const unreadCount = notifications.filter(n => !n.read).length;
+    const unreadCount = (notifications || []).filter(n => !n.read).length;
 
     return (
         <div className="relative" ref={wrapperRef}>

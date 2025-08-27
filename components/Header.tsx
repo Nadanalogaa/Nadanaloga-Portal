@@ -16,7 +16,7 @@ const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onLoginClick }) 
   const location = useLocation();
   const isAdminPage = location.pathname.startsWith('/admin');
 
-  const visibleNavLinks = NAV_LINKS.filter(link => !isAdminPage);
+  const visibleNavLinks = (NAV_LINKS || []).filter(link => !isAdminPage);
 
   const getDashboardPath = () => {
     if (!currentUser) return "/";
