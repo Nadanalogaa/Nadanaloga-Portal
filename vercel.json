@@ -4,7 +4,7 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/api/[...path].cjs"
+      "dest": "/api/index.cjs"
     },
     {
       "src": "/(dashboard|admin|register|login).*",
