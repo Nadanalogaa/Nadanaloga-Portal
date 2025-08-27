@@ -13,7 +13,7 @@ const CoursesSection: React.FC = () => {
     const fetchCourses = async () => {
       try {
         const fetchedCourses = await getCourses();
-        setCourses(fetchedCourses);
+        setCourses(Array.isArray(fetchedCourses) ? fetchedCourses : []);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not load courses.');
       } finally {
@@ -37,7 +37,7 @@ const CoursesSection: React.FC = () => {
           {error && <p className="text-center text-red-500">{error}</p>}
           {!isLoading && !error && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-              {courses.map((course) => (
+              {(courses || []).map((course) => (
                 <div key={course.id} className="bg-white p-8 rounded-xl shadow-lg text-center transform hover:-translate-y-2 transition-transform duration-300 flex flex-col items-center">
                   <Tooltip content={course.name} position="top">
                     <div className="flex justify-center items-center mb-4 h-12 w-12">

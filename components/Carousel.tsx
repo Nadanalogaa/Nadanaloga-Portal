@@ -14,7 +14,7 @@ const Carousel: React.FC<CarouselProps> = ({ onLoginClick }) => {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setCurrentIndex((prevIndex) => (prevIndex + 1) % CAROUSEL_SLIDES.length);
+      setCurrentIndex((prevIndex) => (prevIndex + 1) % (CAROUSEL_SLIDES?.length || 1));
     }, 5000); // Change slide every 5 seconds
     return () => clearInterval(timer);
   }, []);
@@ -26,7 +26,7 @@ const Carousel: React.FC<CarouselProps> = ({ onLoginClick }) => {
   return (
     <div className="relative w-full h-[60vh] md:h-[80vh] overflow-hidden">
       {/* Slides */}
-      {CAROUSEL_SLIDES.map((slide: Slide, index: number) => (
+      {(CAROUSEL_SLIDES || []).map((slide: Slide, index: number) => (
         <div
           key={index}
           className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${index === currentIndex ? 'opacity-100' : 'opacity-0'}`}

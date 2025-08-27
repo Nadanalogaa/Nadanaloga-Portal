@@ -13,7 +13,7 @@ const TestimonialsSection: React.FC = () => {
           </p>
         </div>
         <div className="mt-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {TESTIMONIALS.map((testimonial, index) => (
+          {(TESTIMONIALS || []).map((testimonial, index) => (
             <div key={index} className="bg-brand-light/40 p-8 rounded-xl shadow-lg flex flex-col">
               <p className="text-gray-600 flex-grow">"{testimonial.quote}"</p>
               <div className="mt-6 flex items-center">
