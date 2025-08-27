@@ -5,6 +5,14 @@
       "destination": "/api/admin"
     },
     {
+      "source": "/api/(users|courses|locations|profile|student|family|invoices|contact|events|notices|grade-exams|book-materials)/(.*)",
+      "destination": "/api/public"
+    },
+    {
+      "source": "/api/(users|courses|locations|profile|student|family|invoices|contact|events|notices|grade-exams|book-materials)",
+      "destination": "/api/public"
+    },
+    {
       "source": "/((?!api|_next|_vercel|favicon.ico).*)",
       "destination": "/index.html"
     }
