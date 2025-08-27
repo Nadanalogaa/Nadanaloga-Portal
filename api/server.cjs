@@ -1352,5 +1352,19 @@ if (require.main === module) {
   startServer();
 }
 
+// Create serverless handler that ensures DB connection
+const serverlessHandler = serverless(app);
+
+// Wrap the handler to ensure database connection
+const wrappedHandler = async (req, res) => {
+  try {
+    await ensureSetup();
+    return serverlessHandler(req, res);
+  } catch (error) {
+    console.error('[Serverless] Setup failed:', error);
+    return res.status(500).json({ message: 'Server initialization failed' });
+  }
+};
+
 // Always export a serverless handler for Vercel
-module.exports = serverless(app);
+module.exports = wrappedHandler;
