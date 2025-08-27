@@ -31,10 +31,6 @@
     "NODE_ENV": "production"
   },
   "functions": {
-    "api/*.js": {
-      "maxDuration": 60,
-      "memory": 1024
-    },
     "api/*.cjs": {
       "maxDuration": 60,
       "memory": 1024
