@@ -4,7 +4,7 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/api/[...path].js"
+      "dest": "/api/[...path].cjs"
     },
     {
       "src": "/(dashboard|admin|register|login).*",
@@ -32,6 +32,10 @@
   },
   "functions": {
     "api/*.js": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "api/*.cjs": {
       "maxDuration": 60,
       "memory": 1024
     }
