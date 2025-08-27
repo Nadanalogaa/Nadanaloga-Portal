@@ -1,21 +1,15 @@
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
 
 const JWT_SECRET = process.env.SESSION_SECRET || 'a-very-super-secret-key-for-dev';
 const COOKIE_NAME = 'nadanaloga_session';
 
-// User schema
+// User schema 
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
   role: { type: String, required: true, enum: ['Student', 'Teacher', 'Admin'] },
-  contactNumber: { type: String },
   status: { type: String, enum: ['Active', 'Inactive', 'On Hold', 'Graduated'], default: 'Active' },
-  dateOfJoining: { type: String },
-  isDeleted: { type: Boolean, default: false },
-  deletedAt: { type: Date, default: null },
 });
 
 userSchema.virtual('id').get(function () { return this._id.toHexString(); });
@@ -67,42 +61,49 @@ const readSession = (req) => {
 };
 
 export default async function handler(req, res) {
+  if (req.method !== 'GET') {
+    return res.status(405).json({ message: 'Method not allowed' });
+  }
+
   try {
     const session = readSession(req);
-    if (!session?.user || session.user.role !== 'Admin') {
-      return res.status(403).json({ message: 'Forbidden: Administrative privileges required.' });
+    if (!session?.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
     }
 
     await connectDB();
 
-    if (req.method === 'GET') {
-      const users = await User.find({ role: { $ne: 'Admin' }, isDeleted: { $ne: true } }).select('-password');
-      return res.status(200).json(users);
-    }
+    const { pathname } = new URL(req.url, `https://${req.headers.host}`);
+    
+    // Family students endpoint
+    if (pathname === '/api/family/students') {
+      const loggedInEmail = session.user.email?.toLowerCase();
+      if (!loggedInEmail) {
+        return res.status(400).json({ message: 'Invalid email format in session.' });
+      }
 
-    if (req.method === 'POST') {
-      const { password, ...userData } = req.body;
-      if (!userData.email) {
-        return res.status(400).json({ message: 'Email is required.' });
+      const emailParts = loggedInEmail.split('@');
+      if (emailParts.length < 2) {
+        return res.status(400).json({ message: 'Invalid email format in session.' });
       }
       
-      const existingUser = await User.findOne({ email: userData.email.toLowerCase() });
-      if (existingUser) {
-        return res.status(409).json({ message: 'This email is already in use.' });
+      const baseUsername = emailParts[0].split('+')[0];
+      const domain = emailParts[1];
+      const emailRegex = new RegExp(`^${baseUsername.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}(\\+.+)?@${domain.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}$`, 'i');
+
+      const familyMembers = await User.find({ email: emailRegex, role: 'Student' }).select('-password').sort({ email: 1 });
+      
+      if (!familyMembers || familyMembers.length === 0) {
+        const self = await User.findById(session.user.id).select('-password');
+        return res.status(200).json(self ? [self] : []);
       }
       
-      const effectivePassword = password || 'password123';
-      const hashedPassword = await bcrypt.hash(effectivePassword, 10);
-      const user = new User({ ...userData, password: hashedPassword });
-      await user.save();
-      
-      const newUserDoc = await User.findById(user._id).select('-password');
-      return res.status(201).json(newUserDoc.toJSON());
+      return res.status(200).json(familyMembers);
     }
 
-    return res.status(405).json({ message: 'Method not allowed' });
+    return res.status(404).json({ message: 'Family endpoint not found' });
   } catch (error) {
-    console.error('Admin users error:', error);
-    res.status(500).json({ message: 'Server error managing users.' });
+    console.error('Family API error:', error);
+    res.status(500).json({ message: 'Server error in family API.' });
   }
 }
