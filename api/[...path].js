@@ -3,6 +3,4 @@
 const handler = require('./server.cjs');
 
 // Handle all HTTP methods by forwarding to Express
-module.exports = async (req, res) => {
-  return handler(req, res);
-};
+module.exports = handler;
