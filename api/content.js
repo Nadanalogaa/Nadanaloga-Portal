@@ -79,14 +79,23 @@ const readSession = (req) => {
 
 export default async function handler(req, res) {
   try {
+    await connectDB();
+
+    const { pathname } = new URL(req.url, `https://${req.headers.host}`);
+
+    // Public endpoints that don't require auth
+    if (pathname === '/api/contact' && req.method === 'POST') {
+      const { name, email, message } = req.body;
+      // For now just return success - you can implement contact storage later
+      return res.status(200).json({ success: true });
+    }
+
+    // All other endpoints require authentication
     const session = readSession(req);
     if (!session?.user) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
 
-    await connectDB();
-
-    const { pathname } = new URL(req.url, `https://${req.headers.host}`);
     const path = pathname.replace('/api/', '');
 
     // Events endpoint
@@ -143,6 +152,16 @@ export default async function handler(req, res) {
         const newNotice = new Notice(req.body);
         await newNotice.save();
         return res.status(201).json(newNotice);
+      }
+
+      if (path === 'admin/grade-exams' && req.method === 'GET') {
+        // Return empty array for now
+        return res.status(200).json([]);
+      }
+
+      if (path === 'admin/book-materials' && req.method === 'GET') {
+        // Return empty array for now
+        return res.status(200).json([]);
       }
     }
 
