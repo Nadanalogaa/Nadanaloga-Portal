@@ -66,7 +66,7 @@ const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onLoginClick }) 
           {currentUser ? (
             <>
               <NotificationBell />
-              <span className="text-gray-700 ml-2">Welcome, {displayName.split(' ')[0]}!</span>
+              <span className="text-gray-700 ml-2">Welcome, {displayName ? displayName.split(' ')[0] : 'User'}!</span>
               <button onClick={onLogout} className="bg-brand-secondary hover:bg-yellow-500 text-brand-dark font-semibold px-4 py-2 rounded-full shadow-sm transition-transform duration-300 hover:scale-105">
                 Logout
               </button>
@@ -128,7 +128,7 @@ const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onLoginClick }) 
             <div className="flex flex-col space-y-3 pt-4 border-t">
               {currentUser ? (
                 <>
-                  <span className="px-4 py-2 text-gray-700 text-left">Welcome, {displayName.split(' ')[0]}!</span>
+                  <span className="px-4 py-2 text-gray-700 text-left">Welcome, {displayName ? displayName.split(' ')[0] : 'User'}!</span>
                   <button onClick={() => { onLogout(); setIsMenuOpen(false); }} className="bg-brand-secondary hover:bg-yellow-500 text-brand-dark font-semibold px-4 py-2 rounded-full shadow-sm">
                     Logout
                   </button>

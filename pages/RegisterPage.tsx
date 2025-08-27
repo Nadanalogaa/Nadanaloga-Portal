@@ -252,7 +252,7 @@ const RegisterPage: React.FC<RegisterPageProps> = ({ onLoginNeeded }) => {
                     fatherName: guardianData.name, 
                     contactNumber: guardianData.contactNumber,
                     ...commonContactInfo,
-                    email: index === 0 ? guardianData.email.toLowerCase() : `${guardianData.email.split('@')[0]}+student${index + 1}@${guardianData.email.split('@')[1]}`.toLowerCase(),
+                    email: index === 0 ? guardianData.email.toLowerCase() : guardianData.email && guardianData.email.includes('@') ? `${guardianData.email.split('@')[0]}+student${index + 1}@${guardianData.email.split('@')[1]}`.toLowerCase() : '',
                     password: guardianData.password, dateOfJoining: new Date().toISOString(),
                 }));
             } else if (registrationType === 'teacher') {
