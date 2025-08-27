@@ -1,10 +1,11 @@
-// api/[...path].js
-// Forwards any /api/* request to the Express app
+// api/index.js - Simple API handler for Vercel
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
 const handler = require('./server.cjs');
 
-// Handle all HTTP methods by forwarding to Express
-module.exports = async (req, res) => {
-  // Set CORS headers for production
+export default async function(req, res) {
+  // Set CORS headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -17,4 +18,4 @@ module.exports = async (req, res) => {
   }
 
   return handler(req, res);
-};
+}
