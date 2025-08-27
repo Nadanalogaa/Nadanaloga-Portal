@@ -3,6 +3,10 @@
   "outputDirectory": "dist",
   "routes": [
     {
+      "src": "/api/(.*)",
+      "dest": "/api/[...path].js"
+    },
+    {
       "src": "/(dashboard|admin|register|login).*",
       "dest": "/index.html"
     },
