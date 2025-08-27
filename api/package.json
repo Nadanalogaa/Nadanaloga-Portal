@@ -1,0 +1,19 @@
+{
+  "name": "nadanaloga-api",
+  "version": "1.0.0",
+  "description": "API for Nadanaloga portal",
+  "main": "index.js",
+  "dependencies": {
+    "express": "^4.19.2",
+    "mongoose": "^8.4.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "bcryptjs": "^2.4.3",
+    "nodemailer": "^6.9.13",
+    "jsonwebtoken": "^9.0.2",
+    "cookie-parser": "^1.4.6"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

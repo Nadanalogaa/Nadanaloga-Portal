@@ -1,173 +1,327 @@
-// api.js - Single file API for Vercel
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const dotenv = require('dotenv');
-const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
-const serverless = require('serverless-http');
-const jwt = require('jsonwebtoken');
-const cookieParser = require('cookie-parser');
+// Client-side API functions
+const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-dotenv.config();
-
-const app = express();
-app.use(express.json());
-app.use(cookieParser());
-app.use(cors({
-  origin: true,
-  credentials: true
-}));
-
-const JWT_SECRET = process.env.SESSION_SECRET || 'fallback-secret';
-const COOKIE_NAME = 'nadanaloga_session';
-
-// Simple MongoDB connection
-let isConnected = false;
-const connectDB = async () => {
-  if (isConnected) return;
-  try {
-    await mongoose.connect(process.env.MONGO_URI);
-    isConnected = true;
-    console.log('MongoDB connected');
-  } catch (error) {
-    console.error('DB connection failed:', error);
+const API_BASE_URL = (() => {
+  if (typeof window === 'undefined') return '';
+  const envUrl = window.VITE_API_URL;
+  if (envUrl && typeof envUrl === 'string') {
+    return envUrl.replace(/\/$/, '');
   }
+  return isLocal ? 'http://localhost:4000/api' : '/api';
+})();
+
+const apiFetch = async (endpoint, options = {}) => {
+  const config = {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+    credentials: 'include',
+  };
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+
+  if (response.status === 401 && endpoint !== '/session' && endpoint !== '/users/check-email') {
+    console.error('API request unauthorized. Session may have expired. Redirecting to home.');
+    if (typeof window !== 'undefined') {
+      window.location.assign('/');
+    }
+    return new Promise(() => {});
+  }
+  
+  if (response.status === 204 || response.status === 205) {
+    return null;
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const body = contentType.includes('application/json') ? await response.json() : await response.text();
+
+  if (!response.ok) {
+    const errorMessage = (typeof body === 'object' && body?.message) ? body.message : (typeof body === 'string' && body) ? body : `HTTP Error: ${response.status}`;
+    throw new Error(errorMessage);
+  }
+  
+  return body;
 };
 
-// Simple User schema
-const UserSchema = new mongoose.Schema({
-  name: String,
-  email: String,
-  password: String,
-  contactNumber: String,
-  role: { type: String, default: 'Student' },
-  status: { type: String, default: 'Active' },
-  dateOfJoining: { type: Date, default: Date.now }
-});
+// Export functions for frontend
+export const checkEmailExists = async (email) => {
+  return apiFetch('/users/check-email', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+};
 
-const User = mongoose.models.User || mongoose.model('User', UserSchema);
+export const registerUser = async (userData) => {
+  return apiFetch('/register', {
+    method: 'POST',
+    body: JSON.stringify(userData),
+  });
+};
 
-// Course schema
-const CourseSchema = new mongoose.Schema({
-  name: String,
-  description: String,
-  icon: String
-});
+export const registerAdmin = async (userData) => {
+  return apiFetch('/admin/register', {
+    method: 'POST',
+    body: JSON.stringify(userData),
+  });
+};
 
-const Course = mongoose.models.Course || mongoose.model('Course', CourseSchema);
+export const loginUser = async (email, password) => {
+  return apiFetch('/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+};
 
-// Session helper
-const readSession = (req) => {
-  const token = req.cookies[COOKIE_NAME];
-  if (!token) return null;
+export const getCurrentUser = async () => {
   try {
-    return jwt.verify(token, JWT_SECRET);
-  } catch {
+    const user = await apiFetch('/session');
+    return user;
+  } catch (error) {
+    console.log('No active session found.');
     return null;
   }
 };
 
-// Routes
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+export const logout = async () => {
+  await apiFetch('/logout', { method: 'POST' });
+};
 
-app.get('/api/session', (req, res) => {
-  const session = readSession(req);
-  res.json(session ? session.user : null);
-});
+export const submitContactForm = async (data) => {
+  return apiFetch('/contact', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
 
-app.post('/api/logout', (req, res) => {
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
-  res.json({ message: 'Logout successful' });
-});
+export const getCourses = async () => {
+  return apiFetch('/courses');
+};
 
-app.get('/api/courses', async (req, res) => {
-  try {
-    await connectDB();
-    let courses = await Course.find();
-    if (courses.length === 0) {
-      const initialCourses = [
-        { name: 'Bharatanatyam', description: 'Classical Indian dance.', icon: 'Bharatanatyam' },
-        { name: 'Vocal', description: 'Professional singing training.', icon: 'Vocal' },
-        { name: 'Drawing', description: 'Creative sketching and painting.', icon: 'Drawing' },
-        { name: 'Abacus', description: 'Mental math skills enhancement.', icon: 'Abacus' }
-      ];
-      await Course.insertMany(initialCourses);
-      courses = await Course.find();
-    }
-    res.json(courses);
-  } catch (error) {
-    console.error('Courses error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
+export const updateUserProfile = async (userData) => {
+  return apiFetch('/profile', {
+    method: 'PUT',
+    body: JSON.stringify(userData),
+  });
+};
 
-app.post('/api/login', async (req, res) => {
-  try {
-    await connectDB();
-    const { email, password } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() });
-    
-    if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-    
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-    
-    const userObj = user.toObject();
-    delete userObj.password;
-    
-    const token = jwt.sign({ user: userObj }, JWT_SECRET, { expiresIn: '7d' });
-    const isProd = process.env.NODE_ENV === 'production';
-    
-    res.setHeader('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; ${isProd ? 'Secure; ' : ''}Max-Age=${7 * 24 * 3600}`);
-    res.json(userObj);
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
+// Admin functions
+export const getAdminStats = async () => {
+  return apiFetch('/admin/stats');
+};
 
-app.post('/api/admin/register', async (req, res) => {
-  try {
-    await connectDB();
-    const { name, email, password, contactNumber } = req.body;
-    
-    if (!name || !email || !password || !contactNumber) {
-      return res.status(400).json({ message: 'All fields are required' });
-    }
-    
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
-      return res.status(409).json({ message: 'Email already registered' });
-    }
-    
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const adminUser = new User({
-      name,
-      email: email.toLowerCase(),
-      password: hashedPassword,
-      contactNumber,
-      role: 'Admin',
-      status: 'Active'
-    });
-    
-    await adminUser.save();
-    res.status(201).json({ message: 'Admin registration successful' });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
+export const getAdminUsers = async () => {
+  return apiFetch('/admin/users');
+};
 
-// Handle all methods
-app.all('*', (req, res) => {
-  res.status(404).json({ message: 'Route not found' });
-});
+export const getAdminUserById = async (userId) => {
+  return apiFetch(`/admin/users/${userId}`);
+};
 
-module.exports = serverless(app);
+export const addStudentByAdmin = async (userData) => {
+  return apiFetch('/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(userData),
+  });
+};
+
+export const updateUserByAdmin = async (userId, userData) => {
+  return apiFetch(`/admin/users/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify(userData),
+  });
+};
+
+export const deleteUserByAdmin = async (userId) => {
+  await apiFetch(`/admin/users/${userId}`, {
+    method: 'DELETE',
+  });
+};
+
+export const sendNotification = async (userIds, subject, message) => {
+  return apiFetch('/admin/notifications', {
+    method: 'POST',
+    body: JSON.stringify({ userIds, subject, message }),
+  });
+};
+
+export const getAdminCourses = async () => {
+  return apiFetch('/admin/courses');
+};
+
+export const addCourseByAdmin = async (courseData) => {
+  return apiFetch('/admin/courses', {
+    method: 'POST',
+    body: JSON.stringify(courseData),
+  });
+};
+
+export const updateCourseByAdmin = async (courseId, courseData) => {
+  return apiFetch(`/admin/courses/${courseId}`, {
+    method: 'PUT',
+    body: JSON.stringify(courseData),
+  });
+};
+
+export const deleteCourseByAdmin = async (courseId) => {
+  await apiFetch(`/admin/courses/${courseId}`, {
+    method: 'DELETE',
+  });
+};
+
+// Batch functions
+export const getBatches = async () => {
+  return apiFetch('/admin/batches');
+};
+
+export const addBatch = async (batchData) => {
+  return apiFetch('/admin/batches', {
+    method: 'POST',
+    body: JSON.stringify(batchData),
+  });
+};
+
+export const updateBatch = async (batchId, batchData) => {
+  return apiFetch(`/admin/batches/${batchId}`, {
+    method: 'PUT',
+    body: JSON.stringify(batchData),
+  });
+};
+
+export const deleteBatch = async (batchId) => {
+  await apiFetch(`/admin/batches/${batchId}`, {
+    method: 'DELETE',
+  });
+};
+
+// Notification functions
+export const getNotifications = async () => {
+  return apiFetch('/notifications');
+};
+
+export const markNotificationAsRead = async (notificationId) => {
+  return apiFetch(`/notifications/${notificationId}/read`, {
+    method: 'PUT',
+  });
+};
+
+// Fee Management functions
+export const getFeeStructures = async () => {
+  return apiFetch('/admin/feestructures');
+};
+
+export const addFeeStructure = async (structureData) => {
+  return apiFetch('/admin/feestructures', {
+    method: 'POST',
+    body: JSON.stringify(structureData),
+  });
+};
+
+export const updateFeeStructure = async (structureId, structureData) => {
+  return apiFetch(`/admin/feestructures/${structureId}`, {
+    method: 'PUT',
+    body: JSON.stringify(structureData),
+  });
+};
+
+export const deleteFeeStructure = async (structureId) => {
+  await apiFetch(`/admin/feestructures/${structureId}`, {
+    method: 'DELETE',
+  });
+};
+
+export const getAdminInvoices = async () => {
+  return apiFetch('/admin/invoices');
+};
+
+export const generateInvoices = async () => {
+  return apiFetch('/admin/invoices/generate', {
+    method: 'POST',
+  });
+};
+
+export const recordPayment = async (invoiceId, paymentData) => {
+  return apiFetch(`/admin/invoices/${invoiceId}/pay`, {
+    method: 'PUT',
+    body: JSON.stringify(paymentData),
+  });
+};
+
+// Student functions
+export const getStudentInvoices = async () => {
+  return apiFetch('/invoices');
+};
+
+export const getStudentEnrollments = async () => {
+  return apiFetch('/student/enrollments');
+};
+
+// Family functions
+export const getFamilyStudents = async () => {
+  return apiFetch('/family/students');
+};
+
+export const getStudentInvoicesForFamily = async (studentId) => {
+  return apiFetch(`/family/students/${studentId}/invoices`);
+};
+
+export const getStudentEnrollmentsForFamily = async (studentId) => {
+  return apiFetch(`/family/students/${studentId}/enrollments`);
+};
+
+// Trash functions
+export const getTrashedUsers = async () => {
+  return apiFetch('/admin/trash');
+};
+
+export const restoreUser = async (userId) => {
+  return apiFetch(`/admin/trash/${userId}/restore`, {
+    method: 'PUT',
+  });
+};
+
+export const deleteUserPermanently = async (userId) => {
+  await apiFetch(`/admin/users/${userId}/permanent`, {
+    method: 'DELETE',
+  });
+};
+
+// Location functions
+export const getPublicLocations = async () => apiFetch('/locations');
+export const getLocations = async () => apiFetch('/admin/locations');
+export const addLocation = async (location) => apiFetch('/admin/locations', { method: 'POST', body: JSON.stringify(location) });
+export const updateLocation = async (id, location) => apiFetch(`/admin/locations/${id}`, { method: 'PUT', body: JSON.stringify(location) });
+export const deleteLocation = async (id) => apiFetch(`/admin/locations/${id}`, { method: 'DELETE' });
+
+// Content functions
+export const getEvents = async () => apiFetch('/events');
+export const getAdminEvents = async () => apiFetch('/admin/events');
+export const addEvent = async (event) => apiFetch('/admin/events', { method: 'POST', body: JSON.stringify(event) });
+export const updateEvent = async (id, event) => apiFetch(`/admin/events/${id}`, { method: 'PUT', body: JSON.stringify(event) });
+export const deleteEvent = async (id) => apiFetch(`/admin/events/${id}`, { method: 'DELETE' });
+
+export const getGradeExams = async () => apiFetch('/grade-exams');
+export const getAdminGradeExams = async () => apiFetch('/admin/grade-exams');
+export const addGradeExam = async (exam) => apiFetch('/admin/grade-exams', { method: 'POST', body: JSON.stringify(exam) });
+export const updateGradeExam = async (id, exam) => apiFetch(`/admin/grade-exams/${id}`, { method: 'PUT', body: JSON.stringify(exam) });
+export const deleteGradeExam = async (id) => apiFetch(`/admin/grade-exams/${id}`, { method: 'DELETE' });
+
+export const getBookMaterials = async () => apiFetch('/book-materials');
+export const getAdminBookMaterials = async () => apiFetch('/admin/book-materials');
+export const addBookMaterial = async (material) => apiFetch('/admin/book-materials', { method: 'POST', body: JSON.stringify(material) });
+export const updateBookMaterial = async (id, material) => apiFetch(`/admin/book-materials/${id}`, { method: 'PUT', body: JSON.stringify(material) });
+export const deleteBookMaterial = async (id) => apiFetch(`/admin/book-materials/${id}`, { method: 'DELETE' });
+
+export const getNotices = async () => apiFetch('/notices');
+export const getAdminNotices = async () => apiFetch('/admin/notices');
+export const addNotice = async (notice) => apiFetch('/admin/notices', { method: 'POST', body: JSON.stringify(notice) });
+export const updateNotice = async (id, notice) => apiFetch(`/admin/notices/${id}`, { method: 'PUT', body: JSON.stringify(notice) });
+export const deleteNotice = async (id) => apiFetch(`/admin/notices/${id}`, { method: 'DELETE' });
+
+export const sendContentNotification = async (payload) => {
+  return apiFetch('/admin/content/send', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+};
