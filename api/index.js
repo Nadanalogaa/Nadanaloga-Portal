@@ -157,8 +157,13 @@ const readSession = (req) => {
   }
 };
 
+// Test endpoint
+app.get('/', (req, res) => {
+  res.json({ message: 'API is working!', timestamp: new Date().toISOString() });
+});
+
 // Health check - no DB needed
-app.get('/health', (req, res) => {
+app.get(['/api/health', '/health'], (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
@@ -169,14 +174,14 @@ app.get('/health', (req, res) => {
 });
 
 // Session endpoint - no DB needed
-app.get('/session', (req, res) => {
+app.get(['/api/session', '/session'], (req, res) => {
   noStore(res);
   const session = readSession(req);
   return res.status(200).json(session ? session.user : null);
 });
 
 // Logout endpoint - no DB needed
-app.post('/logout', (req, res) => {
+app.post(['/api/logout', '/logout'], (req, res) => {
   res.setHeader('Set-Cookie', [
     `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
   ]);
@@ -185,7 +190,7 @@ app.post('/logout', (req, res) => {
 });
 
 // Courses endpoint with lazy seeding
-app.get('/courses', async (req, res) => {
+app.get(['/api/courses', '/courses'], async (req, res) => {
   try {
     await connectDB();
     let courses = await Course.find();
@@ -209,7 +214,7 @@ app.get('/courses', async (req, res) => {
 });
 
 // Contact endpoint
-app.post('/contact', async (req, res) => {
+app.post(['/api/contact', '/contact'], async (req, res) => {
   try {
     await connectDB();
     const { name, email, message } = req.body;
@@ -222,7 +227,7 @@ app.post('/contact', async (req, res) => {
 });
 
 // Login endpoint
-app.post('/login', async (req, res) => {
+app.post(['/api/login', '/login'], async (req, res) => {
   try {
     await connectDB();
     const { email, password } = req.body;
@@ -252,7 +257,7 @@ app.post('/login', async (req, res) => {
 });
 
 // Admin register endpoint
-app.post('/admin/register', async (req, res) => {
+app.post(['/api/admin/register', '/admin/register'], async (req, res) => {
   try {
     await connectDB();
     const { name, email, password, contactNumber } = req.body;

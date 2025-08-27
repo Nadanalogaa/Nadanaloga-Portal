@@ -18,9 +18,12 @@ const apiFetch = async (endpoint, options = {}) => {
       ...options.headers,
     },
     credentials: 'include',
+    signal: AbortSignal.timeout(30000), // 30 second timeout
   };
 
+  console.log('API Request:', `${API_BASE_URL}${endpoint}`, config);
   const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+  console.log('API Response status:', response.status);
 
   if (response.status === 401 && endpoint !== '/session' && endpoint !== '/users/check-email') {
     console.error('API request unauthorized. Session may have expired. Redirecting to home.');
@@ -76,10 +79,12 @@ export const loginUser = async (email, password) => {
 
 export const getCurrentUser = async () => {
   try {
+    console.log('Fetching current user from:', API_BASE_URL + '/session');
     const user = await apiFetch('/session');
+    console.log('User response:', user);
     return user;
   } catch (error) {
-    console.log('No active session found.');
+    console.error('getCurrentUser error:', error);
     return null;
   }
 };
